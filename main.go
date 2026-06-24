@@ -364,7 +364,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 	var sb strings.Builder
 
 	title := fmt.Sprintf("MLB LIVE SCOREBOARD (%s)", dateStr)
-	padding := (72 - len(title)) / 2
+	padding := (80 - len(title)) / 2
 	if padding < 0 {
 		padding = 0
 	}
@@ -376,43 +376,47 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 	prevDateStr := currentDate.AddDate(0, 0, -1).Format("2006-01-02")
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	
 	// Date Navigation Row
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(" ", format))
 	prevLinkText := fmt.Sprintf("<< PREV DAY (%s)", prevDateStr)
 	nextLinkText := fmt.Sprintf("NEXT DAY (%s) >>", nextDateStr)
+	spacerSize := 79 - len(prevLinkText) - len(nextLinkText)
+	if spacerSize < 1 {
+		spacerSize = 1
+	}
 	if format == "html" {
 		prevLink := fmt.Sprintf(`<a href="/?date=%s" class="term-link">%s</a>`, prevDateStr, prevLinkText)
 		nextLink := fmt.Sprintf(`<a href="/?date=%s" class="term-link">%s</a>`, nextDateStr, nextLinkText)
-		sb.WriteString(prevLink + strings.Repeat(" ", 23) + nextLink + "\n")
+		sb.WriteString(prevLink + strings.Repeat(" ", spacerSize) + nextLink + "\n")
 	} else {
-		sb.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", 23) + style(nextLinkText, ansiGreen, format) + "\n")
+		sb.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
 	}
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 
 	if len(sched.Dates) == 0 || len(sched.Dates[0].Games) == 0 {
 		sb.WriteString(txt(" No games scheduled for this date.\n", format))
-		sb.WriteString(style("========================================================================\n", ansiCyan, format))
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 		return sb.String()
 	}
 
-	sb.WriteString(style(fmt.Sprintf(" %-8s %-22s %2s  @  %-22s %2s  %-11s\n", "ID", "AWAY TEAM", "R", "HOME TEAM", "R", "STATUS"), ansiBold, format))
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style(fmt.Sprintf(" %-8s %-8s %-19s %2s  @  %2s %-19s %-11s\n", "ID", "TIME", "AWAY TEAM", "R", "R", "HOME TEAM", "STATUS"), ansiBold, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 
 	for _, game := range sched.Dates[0].Games {
 		idStr := strconv.Itoa(game.GamePk)
 		awayName := game.Teams.Away.Team.Name
 		homeName := game.Teams.Home.Team.Name
 
-		if len(awayName) > 22 {
-			awayName = awayName[:21] + "."
+		if len(awayName) > 19 {
+			awayName = awayName[:18] + "."
 		}
-		if len(homeName) > 22 {
-			homeName = homeName[:21] + "."
+		if len(homeName) > 19 {
+			homeName = homeName[:18] + "."
 		}
 
 		awayScoreStr := "-"
@@ -441,24 +445,30 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 			rowStyle = ansiGray
 		}
 
-		row := fmt.Sprintf(" %-8s %-22s %2s  @  %-22s %2s  %-11s\n",
+		gameTime := "--:--"
+		if t, err := time.Parse(time.RFC3339, game.GameDate); err == nil {
+			gameTime = t.Local().Format("03:04 PM")
+		}
+
+		row := fmt.Sprintf(" %-8s %-8s %-19s %2s  @  %2s %-19s %-11s\n",
 			idStr,
+			gameTime,
 			awayName,
 			awayScoreStr,
-			homeName,
 			homeScoreStr,
+			homeName,
 			statusStr,
 		)
 		sb.WriteString(style(row, rowStyle, format))
 	}
 
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 	if format == "ansi" {
 		sb.WriteString(txt(" Run 'curl http://localhost:8080/game/<ID>' to view a game in real-time.\n", format))
 	} else {
 		sb.WriteString(txt(" Click on a game ID to view the game in real-time.\n", format))
 	}
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 
 	if format == "html" {
 		res := sb.String()
@@ -1263,18 +1273,40 @@ const htmlPage = `<!DOCTYPE html>
     <meta charset="utf-8">
     <title>sportstxt - MLB Scoreboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --term-bg: #07080c;
-            --term-green: #39ff14;
-            --term-yellow: #ffeb3b;
-            --term-red: #ff3b30;
-            --term-cyan: #00f0ff;
-            --term-blue: #3b82f6;
-            --term-magenta: #d946ef;
-            --term-gray: #555866;
+            /* Light theme variables by default */
+            --term-bg: #f4f5f8;
+            --term-container-bg: #ffffff;
+            --term-border: #e1e3ec;
+            --term-green: #0d6b38;
+            --term-yellow: #a27b00;
+            --term-red: #c62828;
+            --term-cyan: #007791;
+            --term-blue: #1565c0;
+            --term-magenta: #8e24aa;
+            --term-gray: #6b7280;
+            --term-link-hover: #000000;
             --color-primary: var(--term-green);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                /* Dark theme overrides */
+                --term-bg: #07080c;
+                --term-container-bg: #07080c;
+                --term-border: #1f222e;
+                --term-green: #39ff14;
+                --term-yellow: #ffeb3b;
+                --term-red: #ff3b30;
+                --term-cyan: #00f0ff;
+                --term-blue: #3b82f6;
+                --term-magenta: #d946ef;
+                --term-gray: #555866;
+                --term-link-hover: #ffffff;
+            }
         }
 
         body {
@@ -1290,17 +1322,19 @@ const htmlPage = `<!DOCTYPE html>
             min-height: 100vh;
             box-sizing: border-box;
             overflow-x: hidden;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
         .term-container {
             width: 100%;
             max-width: 900px;
-            background: #07080c;
-            border: 1px solid #1f222e;
+            background: var(--term-container-bg);
+            border: 1px solid var(--term-border);
             border-radius: 8px;
             padding: 30px;
             box-sizing: border-box;
             position: relative;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
         }
 
         pre {
@@ -1329,9 +1363,10 @@ const htmlPage = `<!DOCTYPE html>
             text-decoration: underline;
             cursor: pointer;
             font-weight: bold;
+            transition: color 0.2s ease;
         }
         .term-link:hover {
-            color: #ffffff !important;
+            color: var(--term-link-hover) !important;
         }
 
         /* Status bar */
@@ -1339,10 +1374,11 @@ const htmlPage = `<!DOCTYPE html>
             display: flex;
             justify-content: space-between;
             margin-bottom: 15px;
-            border-bottom: 1px solid #1f222e;
+            border-bottom: 1px solid var(--term-border);
             padding-bottom: 10px;
             font-size: 12px;
-            color: #8a8f98;
+            color: var(--term-gray);
+            transition: border-color 0.3s ease, color 0.3s ease;
         }
 
         .status-bar span {
@@ -1358,6 +1394,7 @@ const htmlPage = `<!DOCTYPE html>
             border-radius: 50%;
             display: inline-block;
             animation: pulse 1.5s infinite;
+            transition: background-color 0.3s ease;
         }
 
         @keyframes pulse {
