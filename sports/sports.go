@@ -1366,9 +1366,27 @@ const htmlPage = `<!DOCTYPE html>
             font-family: inherit;
             font-size: 15px;
             line-height: 1.6;
-            white-space: pre-wrap;
+            white-space: pre;
             position: relative;
             overflow-x: auto;
+            --scrollbar-thumb: var(--term-border);
+            --scrollbar-track: transparent;
+            scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+            scrollbar-width: thin;
+        }
+
+        /* Legacy fallback for WebKit/Blink browsers */
+        @supports not (scrollbar-color: auto) {
+            pre::-webkit-scrollbar {
+                height: 6px;
+            }
+            pre::-webkit-scrollbar-thumb {
+                background: var(--scrollbar-thumb);
+                border-radius: 3px;
+            }
+            pre::-webkit-scrollbar-track {
+                background: var(--scrollbar-track);
+            }
         }
 
         /* Colored spans rendered by Go backend */
@@ -1425,6 +1443,60 @@ const htmlPage = `<!DOCTYPE html>
             0% { transform: scale(0.95); opacity: 0.5; }
             70% { transform: scale(1); opacity: 1; }
             100% { transform: scale(0.95); opacity: 0.5; }
+        }
+
+        /* Responsive design queries for mobile / smaller viewports */
+        @media (max-width: 768px) {
+            body {
+                padding: 12px;
+                justify-content: flex-start;
+            }
+            .term-container {
+                padding: 16px;
+                border-radius: 6px;
+            }
+            pre {
+                font-size: 13px;
+            }
+            .status-bar {
+                font-size: 10px;
+                margin-bottom: 12px;
+                padding-bottom: 8px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 8px;
+            }
+            .term-container {
+                padding: 12px;
+                border-radius: 4px;
+            }
+            pre {
+                font-size: 11px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 6px;
+            }
+            .term-container {
+                padding: 10px;
+            }
+            pre {
+                font-size: 9.5px;
+            }
+            .status-bar {
+                font-size: 9px;
+            }
+        }
+
+        @media (max-width: 380px) {
+            pre {
+                font-size: 8.5px;
+            }
         }
     </style>
 </head>
