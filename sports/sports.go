@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 )
 
 // ANSI terminal style escape codes
@@ -358,10 +359,11 @@ func stripANSIAndHTML(s string) string {
 }
 
 // renderSchedule creates the plain-text scoreboard view
-func renderSchedule(sched ScheduleResponse, dateStr string, format string) string {
+func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *time.Location) string {
 	var sb strings.Builder
 
-	title := fmt.Sprintf("MLB LIVE SCOREBOARD (%s)", dateStr)
+	zoneName, _ := time.Now().In(loc).Zone()
+	title := fmt.Sprintf("MLB LIVE SCOREBOARD (%s %s)", dateStr, zoneName)
 	padding := (80 - len(title)) / 2
 	if padding < 0 {
 		padding = 0
@@ -369,7 +371,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 
 	currentDate, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
-		currentDate = time.Now()
+		currentDate = time.Now().In(loc)
 	}
 	prevDateStr := currentDate.AddDate(0, 0, -1).Format("2006-01-02")
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
@@ -445,7 +447,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 
 		gameTime := "--:--"
 		if t, err := time.Parse(time.RFC3339, game.GameDate); err == nil {
-			gameTime = t.Local().Format("03:04 PM")
+			gameTime = t.In(loc).Format("03:04 PM")
 		}
 
 		row := fmt.Sprintf(" %-8s %-8s %-19s %2s  @  %2s %-19s %-11s\n",
@@ -1105,9 +1107,18 @@ func handleSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
 	dateStr := r.URL.Query().Get("date")
 	if dateStr == "" {
-		dateStr = time.Now().Format("2006-01-02")
+		dateStr = time.Now().In(loc).Format("2006-01-02")
 	}
 
 	url := fmt.Sprintf("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=%s", dateStr)
@@ -1133,11 +1144,11 @@ func handleSchedule(w http.ResponseWriter, r *http.Request) {
 	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
 
 	if isRaw {
-		text := renderSchedule(sched, dateStr, "html")
+		text := renderSchedule(sched, dateStr, "html", loc)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(text))
 	} else if isCurl {
-		text := renderSchedule(sched, dateStr, "ansi")
+		text := renderSchedule(sched, dateStr, "ansi", loc)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(text))
 	} else {
@@ -1209,9 +1220,18 @@ func handleGame(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIGames(w http.ResponseWriter, r *http.Request) {
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
 	dateStr := r.URL.Query().Get("date")
 	if dateStr == "" {
-		dateStr = time.Now().Format("2006-01-02")
+		dateStr = time.Now().In(loc).Format("2006-01-02")
 	}
 
 	url := fmt.Sprintf("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=%s", dateStr)
@@ -1433,6 +1453,9 @@ const htmlPage = `<!DOCTYPE html>
             try {
                 const url = new URL(window.location.href);
                 url.searchParams.set('raw', '1');
+                if (!url.searchParams.has('tz')) {
+                    url.searchParams.set('tz', Intl.DateTimeFormat().resolvedOptions().timeZone);
+                }
                 
                 const res = await fetch(url.toString());
                 if (!res.ok) throw new Error('HTTP status ' + res.status);
