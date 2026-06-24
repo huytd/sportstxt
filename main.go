@@ -368,20 +368,40 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string) strin
 	if padding < 0 {
 		padding = 0
 	}
+
+	currentDate, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		currentDate = time.Now()
+	}
+	prevDateStr := currentDate.AddDate(0, 0, -1).Format("2006-01-02")
+	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
+
 	sb.WriteString(style("========================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
+	
+	// Date Navigation Row
 	sb.WriteString(style("========================================================================\n", ansiCyan, format))
-	sb.WriteString(style(fmt.Sprintf(" %-8s %-22s %2s  @  %-22s %2s  %-11s\n", "ID", "AWAY TEAM", "R", "HOME TEAM", "R", "STATUS"), ansiBold, format))
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(txt(" ", format))
+	prevLinkText := fmt.Sprintf("<< PREV DAY (%s)", prevDateStr)
+	nextLinkText := fmt.Sprintf("NEXT DAY (%s) >>", nextDateStr)
+	if format == "html" {
+		prevLink := fmt.Sprintf(`<a href="/?date=%s" class="term-link">%s</a>`, prevDateStr, prevLinkText)
+		nextLink := fmt.Sprintf(`<a href="/?date=%s" class="term-link">%s</a>`, nextDateStr, nextLinkText)
+		sb.WriteString(prevLink + strings.Repeat(" ", 23) + nextLink + "\n")
+	} else {
+		sb.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", 23) + style(nextLinkText, ansiGreen, format) + "\n")
+	}
+	sb.WriteString(style("========================================================================\n", ansiCyan, format))
 
 	if len(sched.Dates) == 0 || len(sched.Dates[0].Games) == 0 {
-		sb.WriteString(txt(fmt.Sprintf(" %s\n", "No games scheduled for today."), format))
-		sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
-		sb.WriteString(txt(" Use ?date=YYYY-MM-DD to query another date.\n", format))
+		sb.WriteString(txt(" No games scheduled for this date.\n", format))
 		sb.WriteString(style("========================================================================\n", ansiCyan, format))
 		return sb.String()
 	}
+
+	sb.WriteString(style(fmt.Sprintf(" %-8s %-22s %2s  @  %-22s %2s  %-11s\n", "ID", "AWAY TEAM", "R", "HOME TEAM", "R", "STATUS"), ansiBold, format))
+	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
 
 	for _, game := range sched.Dates[0].Games {
 		idStr := strconv.Itoa(game.GamePk)
