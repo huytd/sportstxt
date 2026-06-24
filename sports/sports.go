@@ -377,6 +377,13 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	// Sports Selector row
+	if format == "html" {
+		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, dateStr) + "\n")
+	} else {
+		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+	}
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	
@@ -1274,6 +1281,13 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /game/{gamePk}", handleGame)
 	mux.HandleFunc("GET /api/games", handleAPIGames)
 	mux.HandleFunc("GET /api/game/{gamePk}", handleAPIGameDetail)
+
+	// NBA Routes
+	mux.HandleFunc("GET /nba", handleNBASchedule)
+	mux.HandleFunc("GET /nba/game/{gamePk}", handleNBAGame)
+	mux.HandleFunc("GET /api/nba/games", handleAPINBAGames)
+	mux.HandleFunc("GET /api/nba/game/{gamePk}", handleAPINBAGameDetail)
+
 	return mux
 }
 
@@ -1429,13 +1443,15 @@ const htmlPage = `<!DOCTYPE html>
             const now = new Date();
             const timeStr = now.toTimeString().split(' ')[0];
             const isGamePage = window.location.pathname.startsWith('/game/');
+            const isNBAGamePage = window.location.pathname.startsWith('/nba/game/');
 
             const leftEl = document.getElementById('status-left');
             const rightEl = document.getElementById('status-right');
 
-            if (isGamePage) {
+            if (isGamePage || isNBAGamePage) {
                 if (!leftEl.querySelector('a')) {
-                    leftEl.innerHTML = '<a href="/" class="term-link">&lt;&lt; BACK TO SCOREBOARD</a>';
+                    const backUrl = isNBAGamePage ? '/nba' : '/';
+                    leftEl.innerHTML = '<a href="' + backUrl + '" class="term-link">&lt;&lt; BACK TO SCOREBOARD</a>';
                 }
                 rightEl.innerHTML = '<span class="dot-pulse"></span>LIVE FEED &bull; SYS TIME: ' + timeStr;
             } else {
