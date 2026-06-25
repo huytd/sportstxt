@@ -275,7 +275,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
-	
+
 	// Date Navigation Row
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(" ", format))
@@ -499,7 +499,6 @@ func renderDiamondAndMatchup(game GameFeedResponse, format string) string {
 	}
 
 	matchupLines := []string{
-		style("[COUNT & OUTS]", ansiBold+ansiCyan, format),
 		fmt.Sprintf("Balls:   %s", ballsDotsStyled),
 		fmt.Sprintf("Strikes: %s", strikesDotsStyled),
 		fmt.Sprintf("Outs:    %s", outsDotsStyled),
@@ -690,7 +689,7 @@ func renderCurrentPitches(game GameFeedResponse, format string) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(style(" Pitches:\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style(" PITCHES:\n\n", ansiBold+ansiCyan, format))
 	for _, p := range pitches {
 		sb.WriteString(txt(p+"\n", format))
 	}
@@ -885,7 +884,7 @@ func renderGame(game GameFeedResponse, format string) string {
 	}
 	sb.WriteString(txt(fmt.Sprintf("| %2s %2s %2s\n", homeR, homeH, homeE), format))
 
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style("------------------------------------------------------------------------\n\n", ansiCyan, format))
 
 	sb.WriteString(style(" RECENT PLAYS:\n", ansiBold+ansiCyan, format))
 	plays := game.LiveData.Plays.AllPlays
@@ -939,7 +938,7 @@ func renderGame(game GameFeedResponse, format string) string {
 			halfCode = fmt.Sprintf("%s%d", halfCode, inning)
 
 			prefix := fmt.Sprintf(" [%s] ", halfCode)
-			
+
 			var playLine string
 			if isLast {
 				playLine = style(prefix+desc, ansiGreen, format) + seqStyled + style(" (Current Play)\n", ansiGreen, format)
@@ -947,7 +946,7 @@ func renderGame(game GameFeedResponse, format string) string {
 				playLine = txt(prefix+desc, format) + seqStyled + txt("\n", format)
 			}
 			sb.WriteString(playLine)
-			
+
 			// Show score after play indented under the play
 			scoreLine := fmt.Sprintf(" Score: %d-%d\n", play.Result.AwayScore, play.Result.HomeScore)
 			sb.WriteString(style(scoreLine, ansiGray, format))
