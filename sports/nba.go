@@ -298,7 +298,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 
 	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 	if format == "ansi" {
-		sb.WriteString(txt(" Run 'curl http://localhost:8080/nba/game/<ID>' to view a game in real-time.\n", format))
+		sb.WriteString(txt(" Run 'curl http://localhost:9090/nba/game/<ID>' to view a game in real-time.\n", format))
 	} else {
 		sb.WriteString(txt(" Click on a game ID to view the game in real-time.\n", format))
 	}
@@ -734,7 +734,7 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 	sb.WriteString(style("========================================================================\n", ansiCyan, format))
 
 	if format == "ansi" {
-		sb.WriteString(txt(" Run 'curl http://localhost:8080/nba' to return to the scoreboard.\n", format))
+		sb.WriteString(txt(" Run 'curl http://localhost:9090/nba' to return to the scoreboard.\n", format))
 		sb.WriteString(style("========================================================================\n", ansiCyan, format))
 	}
 
@@ -828,7 +828,7 @@ func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString(txt(" Details: The requested game ID is invalid or not yet available.\n", format))
 		sb.WriteString(style("========================================================================\n", ansiRed, format))
 		if format == "ansi" {
-			sb.WriteString(txt(" Run 'curl http://localhost:8080/nba' to return to the scoreboard.\n", format))
+			sb.WriteString(txt(" Run 'curl http://localhost:9090/nba' to return to the scoreboard.\n", format))
 			sb.WriteString(style("========================================================================\n", ansiRed, format))
 		}
 

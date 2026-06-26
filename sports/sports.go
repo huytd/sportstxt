@@ -1,9 +1,11 @@
 package sports
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -126,6 +128,10 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /api/games", handleAPIGames)
 	mux.HandleFunc("GET /api/game/{gamePk}", handleAPIGameDetail)
 
+	// MLB Standings and Team Routes
+	mux.HandleFunc("GET /mlb/standings", handleStandings)
+	mux.HandleFunc("GET /mlb/team/{teamId}", handleTeamPage)
+
 	// NBA Routes
 	mux.HandleFunc("GET /nba", handleNBASchedule)
 	mux.HandleFunc("GET /nba/game/{gamePk}", handleNBAGame)
@@ -133,6 +139,96 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /api/nba/game/{gamePk}", handleAPINBAGameDetail)
 
 	return mux
+}
+
+// handleStandings handles the /standings route
+func handleStandings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	url := "https://statsapi.mlb.com/api/v1/standings?sportId=1&season=2025&seasonStage=regularSeason&granularity=team"
+	resp, err := client.Get(url)
+	if err != nil {
+		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("MLB Stats API returned status code %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	var standings StandingsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&standings); err != nil {
+		http.Error(w, "Failed to decode standings JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	isRaw := r.URL.Query().Get("raw") == "1"
+	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
+
+	if isRaw {
+		text := renderStandings(standings, "html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(text))
+	} else if isCurl {
+		text := renderStandings(standings, "ansi")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(text))
+	} else {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(htmlPage))
+	}
+}
+
+// handleTeamPage handles the /team/{teamId} route
+func handleTeamPage(w http.ResponseWriter, r *http.Request) {
+	teamId := r.PathValue("teamId")
+	teamIdInt, err := strconv.Atoi(teamId)
+	if err != nil || teamIdInt <= 0 {
+		http.Error(w, "Invalid team ID", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch team info first
+	infoUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/teams/%d?sportId=1", teamIdInt)
+	resp, err := client.Get(infoUrl)
+	if err != nil {
+		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	var teamInfo struct {
+		Teams []struct {
+			Id           int    `json:"id"`
+			Name         string `json:"name"`
+			Abbreviation string `json:"abbreviation"`
+		} `json:"teams"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&teamInfo); err != nil {
+		http.Error(w, "Failed to decode team info: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	isRaw := r.URL.Query().Get("raw") == "1"
+	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
+	format := "html"
+	if isCurl && !isRaw {
+		format = "ansi"
+	}
+
+	text := renderTeamPage(teamInfo.Teams[0].Id, teamInfo.Teams[0].Name, teamInfo.Teams[0].Abbreviation, format)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if format == "ansi" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.Write([]byte(text))
 }
 
 const htmlPage = `<!DOCTYPE html>
@@ -346,6 +442,14 @@ const htmlPage = `<!DOCTYPE html>
 </head>
 <body>
     <div class="term-container">
+        <!-- Navigation Bar -->
+        <nav style="display: flex; gap: 12px; margin-bottom: 15px;">
+            <a href="/" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Scoreboard</a>
+            <a href="/mlb/standings" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Standings</a>
+            <a href="/mlb/team/130" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Teams</a>
+            <a href="/nba" class="term-link" style="padding: 6px 14px; border-radius: 4px;">NBA</a>
+        </nav>
+
         <div class="status-bar">
             <span id="status-left"><span class="dot-pulse"></span>LIVE FEED</span>
             <span id="status-right">SYS TIME: --:--:--</span>
@@ -403,7 +507,7 @@ const htmlPage = `<!DOCTYPE html>
 
         // Initial fetch
         fetchTerminalData();
-        // Poll every 10 seconds
+        // Poll every 10 seconds (only on scoreboard/game pages)
         setInterval(fetchTerminalData, 10000);
 
         // Handle navigation inside terminal via AJAX
