@@ -22,12 +22,14 @@ type ScheduleResponse struct {
 			Teams struct {
 				Away struct {
 					Team struct {
+						Id   int    `json:"id"`
 						Name string `json:"name"`
 					} `json:"team"`
 					Score int `json:"score"`
 				} `json:"away"`
 				Home struct {
 					Team struct {
+						Id   int    `json:"id"`
 						Name string `json:"name"`
 					} `json:"team"`
 					Score int `json:"score"`
@@ -1256,7 +1258,7 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	// Sports Selector row with navigation
 	if format == "html" {
-		sb.WriteString(txt(" ", format) + fmt.Sprintf(`<a href="/" class="term-link">[SCOREBOARD]</a>`, now) + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, now) + "\n")
+		sb.WriteString(txt(" ", format) + `<a href="/" class="term-link">[SCOREBOARD]</a>` + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, now) + "\n")
 	} else {
 		sb.WriteString(txt(" [SCOREBOARD]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
 	}
@@ -1342,7 +1344,7 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 			}
 
 			// Use placeholder for team link (replaced after formatting to avoid HTML escaping)
-			displayAbbr := fmt.Sprintf("<<TEAM_LINK_%d>>", t.Id)
+			displayAbbr := fmt.Sprintf("__TL_%d__", t.Id)
 
 			// Highlight division leader
 			var rowStyle string
@@ -1386,7 +1388,7 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 				teamName = teamName[:19] + "."
 			}
 			// Use placeholder for team link (replaced after formatting to avoid HTML escaping)
-			displayAbbr := fmt.Sprintf("<<TEAM_LINK_%d>>", t.Id)
+			displayAbbr := fmt.Sprintf("__TL_%d__", t.Id)
 			gb := t.GB
 			if gb == "-" {
 				gb = "-"
@@ -1416,18 +1418,19 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 
 	result := sb.String()
 
-	// Post-process: replace team link placeholders with actual <a> tags (HTML only)
-	// This avoids having HTML escaped by style()/txt() via html.EscapeString()
-	if format == "html" {
-		for _, rec := range standings.Records {
-			for _, tr := range rec.TeamRecords {
-				tm, ok := teamMap[tr.Team.Id]
-				if !ok {
-					tm = TeamInfo{Abbreviation: tr.Team.Abbreviation}
-				}
-				placeholder := fmt.Sprintf("<<TEAM_LINK_%d>>", tr.Team.Id)
+	// Post-process: replace team link placeholders with actual links/abbreviations
+	for _, rec := range standings.Records {
+		for _, tr := range rec.TeamRecords {
+			tm, ok := teamMap[tr.Team.Id]
+			if !ok {
+				tm = TeamInfo{Abbreviation: tr.Team.Abbreviation}
+			}
+			placeholder := fmt.Sprintf("__TL_%d__", tr.Team.Id)
+			if format == "html" {
 				link := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, tr.Team.Id, tm.Abbreviation)
 				result = strings.ReplaceAll(result, placeholder, link)
+			} else {
+				result = strings.ReplaceAll(result, placeholder, tm.Abbreviation)
 			}
 		}
 	}
@@ -1436,7 +1439,7 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 }
 
 // fetchTeamGames fetches a team's schedule for a given date range
-func fetchTeamGames(teamId int, teamAbb string, startDate string, endDate string) ([]TeamGame, error) {
+func fetchTeamGames(teamId int, startDate string, endDate string) ([]TeamGame, error) {
 	url := fmt.Sprintf("https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=%s&endDate=%s&teamId=%d", startDate, endDate, teamId)
 	resp, err := client.Get(url)
 	if err != nil {
@@ -1452,17 +1455,12 @@ func fetchTeamGames(teamId int, teamAbb string, startDate string, endDate string
 	var games []TeamGame
 	for _, date := range sched.Dates {
 		for _, game := range date.Games {
+			homeId := game.Teams.Home.Team.Id
 			awayName := game.Teams.Away.Team.Name
 			homeName := game.Teams.Home.Team.Name
 
-			// Determine if our team is home or away by matching abbreviation
-			isHome := strings.Contains(homeName, teamAbb)
-			if !isHome {
-				// Fallback: check if the abbreviation appears at all in the name
-				isHome = false
-			}
+			isHome := homeId == teamId
 
-			// Determine opponent name (the other team)
 			opponent := awayName
 			if isHome {
 				opponent = awayName
@@ -1529,7 +1527,7 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	// Navigation row
 	if format == "html" {
-		sb.WriteString(txt(" ", format) + fmt.Sprintf(`<a href="/" class="term-link">[SCOREBOARD]</a>`, teamAbb) + txt("   ", format) + fmt.Sprintf(`<a href="/mlb/standings" class="term-link">[STANDINGS]</a>`) + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, time.Now().Format("2006-01-02")) + "\n")
+		sb.WriteString(txt(" ", format) + `<a href="/" class="term-link">[SCOREBOARD]</a>` + txt("   ", format) + `<a href="/mlb/standings" class="term-link">[STANDINGS]</a>` + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, time.Now().Format("2006-01-02")) + "\n")
 	} else {
 		sb.WriteString(txt(" [SCOREBOARD]   [STANDINGS]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
 	}
@@ -1549,7 +1547,7 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 
 	// Fetch team season stats from MLB Stats API (dynamic year)
-	statsUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/teams/%d/stats?season=%d&seasonStage=regularSeason&granularity=full", teamId, seasonYear)
+	statsUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/teams/%d/stats?season=%d&gameType=R&stats=season&group=hitting,pitching,fielding", teamId, seasonYear)
 	resp, err := client.Get(statsUrl)
 	if err != nil {
 		sb.WriteString(style("\n WARNING: Could not fetch team stats.\n", ansiYellow, format))
@@ -1557,114 +1555,80 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 		defer resp.Body.Close()
 
 		var teamData struct {
-			Team struct {
-				Id           int    `json:"id"`
-				Name         string `json:"name"`
-				Abbreviation string `json:"abbreviation"`
-			} `json:"team"`
-			Stats []struct {
-				Type struct {
-					DisplayName string `json:"displayName"`
-				} `json:"type"`
-				Splits []struct {
-					Stat struct {
-						DisplayValue string `json:"displayValue"`
-					} `json:"stat"`
-				} `json:"splits"`
-			} `json:"stats"`
-		}
+				Team struct {
+					Id           int    `json:"id"`
+					Name         string `json:"name"`
+					Abbreviation string `json:"abbreviation"`
+				} `json:"team"`
+				Stats []struct {
+					Type struct {
+						DisplayName string `json:"displayName"`
+					} `json:"type"`
+					Group struct {
+						DisplayName string `json:"displayName"`
+					} `json:"group"`
+					Splits []struct {
+						Stat map[string]interface{} `json:"stat"`
+					} `json:"splits"`
+				} `json:"stats"`
+			}
 
-		if err := json.NewDecoder(resp.Body).Decode(&teamData); err != nil {
-			sb.WriteString(style("\n WARNING: Could not decode team stats.\n", ansiYellow, format))
-		} else {
-			// Organize stats by category
-			type statGroup struct {
-				label string
-				stats []struct {
-					name  string
-					value string
+			if err := json.NewDecoder(resp.Body).Decode(&teamData); err != nil {
+				sb.WriteString(style("\n WARNING: Could not decode team stats.\n", ansiYellow, format))
+			} else {
+				statLabels := map[string]string{
+					"avg": "AVG", "obp": "OBP", "slg": "SLG", "ops": "OPS",
+					"homeRuns": "HR", "runs": "R", "hits": "H", "rbi": "RBI",
+					"stolenBases": "SB", "baseOnBalls": "BB", "strikeOuts": "SO",
+					"era": "ERA", "wins": "W", "losses": "L",
+					"saves": "SV", "whip": "WHIP", "inningsPitched": "IP",
+					"gamesPlayed": "GP", "gamesStarted": "GS", "completeGames": "CG",
+					"shutouts": "SHO", "holds": "HLD", "blownSaves": "BS",
+					"battingAverage": "AVG", "onBasePercentage": "OBP",
+					"slugPercentage": "SLG",
 				}
-			}
-			var battingStats, pitchingStats, teamStats []struct {
-				name  string
-				value string
-			}
 
-			for _, stat := range teamData.Stats {
-				if stat.Type.DisplayName == "hitting" || stat.Type.DisplayName == "BattingRank" {
-					for _, split := range stat.Splits {
-						battingStats = append(battingStats, struct {
-							name  string
-							value string
-						}{stat.Type.DisplayName, split.Stat.DisplayValue})
-					}
-				} else if stat.Type.DisplayName == "pitching" || stat.Type.DisplayName == "PitchingRank" {
-					for _, split := range stat.Splits {
-						pitchingStats = append(pitchingStats, struct {
-							name  string
-							value string
-						}{stat.Type.DisplayName, split.Stat.DisplayValue})
-					}
-				} else if stat.Type.DisplayName == "Team vs. Position" || stat.Type.DisplayName == "TeamRank" {
-					for _, split := range stat.Splits {
-						teamStats = append(teamStats, struct {
-							name  string
-							value string
-						}{stat.Type.DisplayName, split.Stat.DisplayValue})
-					}
-				} else if stat.Type.DisplayName == "Season" || stat.Type.DisplayName == "vs. Division" {
-					// These are summary records, skip for now
-				}
-			}
-
-			// Also grab from the simpler stat groups (hitting/pitching)
-			hasStats := false
-			for _, stat := range teamData.Stats {
-				displayName := strings.ToLower(stat.Type.DisplayName)
-				if displayName == "hitting" || displayName == "pitching" || displayName == "team vs. position" || displayName == "springTraining" {
-					hasStats = true
-					groupLabel := stat.Type.DisplayName
-					if groupLabel == "hitting" {
-						groupLabel = "Batting"
-					} else if groupLabel == "pitching" {
-						groupLabel = "Pitching"
-					}
-					sb.WriteString(style(fmt.Sprintf("\n %s STATISTICS\n", strings.ToUpper(groupLabel)), ansiBold+ansiCyan, format))
-					sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-					for _, split := range stat.Splits {
-						val := split.Stat.DisplayValue
-						if len(val) > 50 {
-							val = val[:47] + "..."
-						}
-						sb.WriteString(txt(fmt.Sprintf("  %-30s %s\n", "", val), format))
-					}
-					sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-				}
-			}
-
-			if !hasStats {
-				// Fallback: show all available stats in a single section
 				for _, stat := range teamData.Stats {
-					if len(stat.Splits) > 0 {
-						sb.WriteString(style(fmt.Sprintf("\n %s STATISTICS\n", strings.ToUpper(stat.Type.DisplayName)), ansiBold+ansiCyan, format))
+					gn := stat.Group.DisplayName
+					if gn == "" || len(stat.Splits) == 0 {
+						continue
+					}
+					if gn == "hitting" {
+						sb.WriteString(style("\n BATTING STATISTICS\n", ansiBold+ansiCyan, format))
 						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-						for _, split := range stat.Splits {
-							val := split.Stat.DisplayValue
-							if len(val) > 50 {
-								val = val[:47] + "..."
+						for k, v := range stat.Splits[0].Stat {
+							label := statLabels[k]
+							if label == "" {
+								label = k
 							}
-							sb.WriteString(txt(fmt.Sprintf("  %-30s %s\n", "", val), format))
+							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
+						}
+						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+					} else if gn == "pitching" {
+						sb.WriteString(style("\n PITCHING STATISTICS\n", ansiBold+ansiCyan, format))
+						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+						for k, v := range stat.Splits[0].Stat {
+							label := statLabels[k]
+							if label == "" {
+								label = k
+							}
+							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
+						}
+						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+					} else if gn == "fielding" {
+						sb.WriteString(style("\n FIELDING STATISTICS\n", ansiBold+ansiCyan, format))
+						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+						for k, v := range stat.Splits[0].Stat {
+							label := statLabels[k]
+							if label == "" {
+								label = k
+							}
+							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
 						}
 						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 					}
 				}
 			}
-
-			// Suppress unused variable warnings
-			_ = battingStats
-			_ = pitchingStats
-			_ = teamStats
-		}
 	}
 
 	// Fetch and display recent games (last 30 days)
@@ -1672,7 +1636,7 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 	startDate := today.AddDate(0, 0, -30).Format("2006-01-02")
 	endDate := today.Format("2006-01-02")
 
-	games, err := fetchTeamGames(teamId, teamAbb, startDate, endDate)
+	games, err := fetchTeamGames(teamId, startDate, endDate)
 	var allGames []TeamGame
 	if err != nil {
 		sb.WriteString(style("\n WARNING: Could not fetch recent games.\n", ansiYellow, format))
@@ -1700,24 +1664,24 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 				opponent = opponent[:19] + "..."
 			}
 
-			var wlDisplay string
+			var wlPlaceholder string
 			var rowStyle string
 			switch g.Result {
 			case "W":
-				wlDisplay = style(" W ", ansiGreen, format)
+				wlPlaceholder = "__WL_W__"
 				rowStyle = ansiGreen
 			case "L":
-				wlDisplay = style(" L ", ansiRed, format)
+				wlPlaceholder = "__WL_L__"
 				rowStyle = ""
 			case "T":
-				wlDisplay = " T "
+				wlPlaceholder = "__WL_T__"
 				rowStyle = ansiYellow
 			default:
 				if g.State == "In Progress" || g.State == "Live" {
-					wlDisplay = style(" LIVE", ansiGreen, format)
+					wlPlaceholder = "__WL_LIVE__"
 					rowStyle = ansiGreen
 				} else {
-					wlDisplay = "    "
+					wlPlaceholder = "__WL_EMPTY__"
 					rowStyle = ansiGray
 				}
 			}
@@ -1728,13 +1692,13 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 			// Use placeholder for game link (replaced after formatting to avoid HTML escaping)
 			var scoreDisplay string
 			if g.Score != "-" {
-				scoreDisplay = fmt.Sprintf("<<GAME_LINK_%d>>", g.GamePk)
+				scoreDisplay = fmt.Sprintf("__GL_%d__", g.GamePk)
 			} else {
-				scoreDisplay = fmt.Sprintf("<<UPCOMING_LINK_%d>>", g.GamePk)
+				scoreDisplay = fmt.Sprintf("__UL_%d__", g.GamePk)
 			}
 
 			row := fmt.Sprintf(" %-10s %-24s%4s  %-5s\n",
-				g.Date, oppDisplay, wlDisplay, scoreDisplay,
+				g.Date, oppDisplay, wlPlaceholder, scoreDisplay,
 			)
 			if rowStyle != "" {
 				sb.WriteString(style(row, rowStyle, format))
@@ -1753,16 +1717,33 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 
 	result := sb.String()
 
-	// Post-process: replace game link placeholders with actual <a> tags (HTML only)
-	if format == "html" {
-		for _, g := range allGames {
-			gameLink := fmt.Sprintf("<<GAME_LINK_%d>>", g.GamePk)
+	// Post-process: replace W/L and game link placeholders with actual links or plain text
+	wlReplacements := map[string]string{
+		"__WL_W__":     style(" W ", ansiGreen, format),
+		"__WL_L__":     style(" L ", ansiRed, format),
+		"__WL_T__":     " T ",
+		"__WL_LIVE__":  style(" LIVE", ansiGreen, format),
+		"__WL_EMPTY__": "    ",
+	}
+	for placeholder, replacement := range wlReplacements {
+		result = strings.ReplaceAll(result, placeholder, replacement)
+	}
+
+	for _, g := range allGames {
+		gameLink := fmt.Sprintf("__GL_%d__", g.GamePk)
+		if format == "html" {
 			link := fmt.Sprintf(`<a href="/game/%d" class="term-link">%s</a>`, g.GamePk, g.Score)
 			result = strings.ReplaceAll(result, gameLink, link)
+		} else {
+			result = strings.ReplaceAll(result, gameLink, g.Score)
+		}
 
-			upcomingLink := fmt.Sprintf("<<UPCOMING_LINK_%d>>", g.GamePk)
+		upcomingLink := fmt.Sprintf("__UL_%d__", g.GamePk)
+		if format == "html" {
 			upcomingA := fmt.Sprintf(`<a href="/game/%d" class="term-link">UPCOMING</a>`, g.GamePk)
 			result = strings.ReplaceAll(result, upcomingLink, upcomingA)
+		} else {
+			result = strings.ReplaceAll(result, upcomingLink, "UPCOMING")
 		}
 	}
 
