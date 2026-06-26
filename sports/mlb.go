@@ -696,37 +696,6 @@ func renderCurrentPitches(game GameFeedResponse, format string) string {
 	return sb.String()
 }
 
-// StandingsResponse represents the response from MLB Stats API standings endpoint
-type StandingsResponse struct {
-	Standings []struct {
-		League struct {
-			Abbreviation string `json:"abbreviation"`
-			Id           int    `json:"id"`
-		} `json:"league"`
-		Division struct {
-			Abbreviation string `json:"abbreviation"`
-			Id           int    `json:"id"`
-			Name         string `json:"name"`
-		} `json:"division"`
-		TeamRecord struct {
-			Wins        int `json:"wins"`
-			Losses      int `json:"losses"`
-			Ties        int `json:"ties"`
-			WinsPercentage string `json:"winsPercentage"`
-			GamesBehind string `json:"gamesBehind"`
-		} `json:"teamRecord"`
-		Team struct {
-			Abbreviation string `json:"abbreviation"`
-			Id           int    `json:"id"`
-			Name         string `json:"name"`
-			Venue        struct {
-				City     string `json:"city"`
-				Name     string `json:"name"`
-			} `json:"venue"`
-		} `json:"team"`
-	} `json:"standings"`
-}
-
 // TeamSeasonStats represents season statistics for a team
 type TeamSeasonStats struct {
 	Batting struct {
@@ -1223,21 +1192,48 @@ type DivisionTeam struct {
 	} `json:"venue"`
 }
 
+// LeagueStandingsResponse represents the response from the league-based standings API
+type LeagueStandingsResponse struct {
+	Records []struct {
+		Division struct {
+			Id int `json:"id"`
+		} `json:"division"`
+		TeamRecords []struct {
+			Team struct {
+				Id       int    `json:"id"`
+				Name     string `json:"name"`
+				Abbreviation string `json:"abbreviation"`
+			} `json:"team"`
+			LeagueRecord struct {
+				Wins   int  `json:"wins"`
+				Losses int  `json:"losses"`
+				Ties   int  `json:"ties"`
+				Pct    string `json:"pct"`
+			} `json:"leagueRecord"`
+			DivisionRank    string `json:"divisionRank"`
+			LeagueRank      string `json:"leagueRank"`
+			GamesBack       string `json:"gamesBack"`
+		} `json:"teamRecords"`
+	} `json:"records"`
+}
+
 // renderStandings creates the plain-text standings view
-func renderStandings(standings StandingsResponse, format string) string {
+func renderStandings(standings LeagueStandingsResponse, teamMap map[int]struct{ Name, Abbreviation string }, format string) string {
 	var sb strings.Builder
 
 	loc := time.Now().Location()
-	zoneName := loc.String()
-	title := fmt.Sprintf("MLB STANDINGS (%s)", zoneName)
+	zoneName, _ := time.Now().In(loc).Zone()
+	now := time.Now().Format("2006-01-02")
+	title := fmt.Sprintf("MLB STANDINGS (%s %s)", zoneName, now)
 	padding := (80 - len(title)) / 2
 	if padding < 0 {
 		padding = 0
 	}
 
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	// Sports Selector row
 	if format == "html" {
-		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=`+`%s`+`" class="term-link">[NBA]</a>`, time.Now().Format("2006-01-02")) + "\n")
+		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, now) + "\n")
 	} else {
 		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
 	}
@@ -1245,9 +1241,7 @@ func renderStandings(standings StandingsResponse, format string) string {
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
-
-	// Group standings by division
+	// Group standings by division: AL East, AL Central, AL West, NL East, NL Central, NL West
 	alEast := []DivisionTeam{}
 	alCentral := []DivisionTeam{}
 	alWest := []DivisionTeam{}
@@ -1255,25 +1249,45 @@ func renderStandings(standings StandingsResponse, format string) string {
 	nlCentral := []DivisionTeam{}
 	nlWest := []DivisionTeam{}
 
-	for _, s := range standings.Standings {
-		switch {
-		case s.Division.Name == "American League East":
-			alEast = append(alEast, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
-		case s.Division.Name == "American League Central":
-			alCentral = append(alCentral, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
-		case s.Division.Name == "American League West":
-			alWest = append(alWest, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
-		case s.Division.Name == "National League East":
-			nlEast = append(nlEast, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
-		case s.Division.Name == "National League Central":
-			nlCentral = append(nlCentral, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
-		case s.Division.Name == "National League West":
-			nlWest = append(nlWest, DivisionTeam{s.Team.Abbreviation, s.Team.Id, s.Team.Name, s.TeamRecord.Wins, s.TeamRecord.Losses, s.TeamRecord.Ties, s.TeamRecord.WinsPercentage, s.TeamRecord.GamesBehind, s.Team.Venue})
+	for _, rec := range standings.Records {
+		divId := rec.Division.Id
+		for _, tr := range rec.TeamRecords {
+			tm, ok := teamMap[tr.Team.Id]
+			if !ok {
+				tm = struct{ Name, Abbreviation string }{tr.Team.Name, ""}
+			}
+			t := DivisionTeam{
+				Abbreviation: tm.Abbreviation,
+				Id:           tr.Team.Id,
+				Name:         tm.Name,
+				Wins:         tr.LeagueRecord.Wins,
+				Losses:       tr.LeagueRecord.Losses,
+				Ties:         tr.LeagueRecord.Ties,
+				PCT:          tr.LeagueRecord.Pct,
+				GB:           tr.GamesBack,
+			}
+			switch divId {
+			case 200: // AL West
+				alWest = append(alWest, t)
+			case 201: // AL East
+				alEast = append(alEast, t)
+			case 202: // AL Central
+				alCentral = append(alCentral, t)
+			case 203: // NL West
+				nlWest = append(nlWest, t)
+			case 204: // NL East
+				nlEast = append(nlEast, t)
+			case 205: // NL Central
+				nlCentral = append(nlCentral, t)
+			}
 		}
 	}
 
-	renderDivision := func(teams []DivisionTeam, divName string) {
-		sb.WriteString(style(fmt.Sprintf("\n%s DIVISION STANDINGS (%s)", strings.ToUpper(divName[:1]), divName), ansiBold+ansiCyan, format))
+	renderDivision := func(teams []DivisionTeam, divAbbr string) {
+		if len(teams) == 0 {
+			return
+		}
+		sb.WriteString(style(fmt.Sprintf("\n%s DIVISION STANDINGS", strings.ToUpper(divAbbr)), ansiBold+ansiCyan, format))
 		sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 		sb.WriteString(style(fmt.Sprintf(" %-10s %-28s %4s %4s %3s  %6s  %s  %s\n", "TEAM", "VENUE", "W", "L", "T", "PCT", "GB", "LINK"), ansiBold, format))
 		sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
@@ -1283,7 +1297,7 @@ func renderStandings(standings StandingsResponse, format string) string {
 			if format == "ansi" {
 				link = t.Abbreviation
 			}
-			row := fmt.Sprintf(" %-10s %-28s %4d %4d %3d  %6s  %s  %s\n",
+			row := fmt.Sprintf(" %-10s %-28s %4d %4d %3d  %6s  %s\n",
 				link,
 				t.Venue.Name,
 				t.Wins,
@@ -1291,19 +1305,18 @@ func renderStandings(standings StandingsResponse, format string) string {
 				t.Ties,
 				t.PCT,
 				t.GB,
-				t.Abbreviation,
 			)
 			sb.WriteString(style(row, ansiBold, format))
 		}
 		sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
 	}
 
-	renderDivision(alEast, "American League East")
-	renderDivision(alCentral, "American League Central")
-	renderDivision(alWest, "American League West")
-	renderDivision(nlEast, "National League East")
-	renderDivision(nlCentral, "National League Central")
-	renderDivision(nlWest, "National League West")
+	renderDivision(alEast, "AL EAST")
+	renderDivision(alCentral, "AL CENTRAL")
+	renderDivision(alWest, "AL WEST")
+	renderDivision(nlEast, "NL EAST")
+	renderDivision(nlCentral, "NL CENTRAL")
+	renderDivision(nlWest, "NL WEST")
 
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	if format == "ansi" {

@@ -148,34 +148,86 @@ func handleStandings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := "https://statsapi.mlb.com/api/v1/standings?sportId=1&season=2025&seasonStage=regularSeason&granularity=team"
-	resp, err := client.Get(url)
+	// Fetch all team info to get abbreviations
+	teamsUrl := "https://statsapi.mlb.com/api/v1/teams?sportId=1"
+	teamsResp, err := client.Get(teamsUrl)
 	if err != nil {
 		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer teamsResp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("MLB Stats API returned status code %d", resp.StatusCode), http.StatusBadGateway)
+	var allTeams struct {
+		Teams []struct {
+			Id           int    `json:"id"`
+			Name         string `json:"name"`
+			Abbreviation string `json:"abbreviation"`
+		} `json:"teams"`
+	}
+	if err := json.NewDecoder(teamsResp.Body).Decode(&allTeams); err != nil {
+		http.Error(w, "Failed to decode teams JSON: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	var standings StandingsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&standings); err != nil {
-		http.Error(w, "Failed to decode standings JSON: "+err.Error(), http.StatusInternalServerError)
+	// Build team lookup map
+	teamMap := make(map[int]struct {
+		Name         string
+		Abbreviation string
+	})
+	for _, t := range allTeams.Teams {
+		teamMap[t.Id] = struct {
+			Name         string
+			Abbreviation string
+		}{t.Name, t.Abbreviation}
+	}
+
+	// Fetch standings for AL and NL separately using league-based endpoints
+	alUrl := "https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=103&season=2025&seasonStage=regularSeason&granularity=team"
+	nlUrl := "https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=104&season=2025&seasonStage=regularSeason&granularity=team"
+
+	alResp, err := client.Get(alUrl)
+	if err != nil {
+		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	defer alResp.Body.Close()
+
+	nlResp, err := client.Get(nlUrl)
+	if err != nil {
+		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer nlResp.Body.Close()
+
+	if alResp.StatusCode != http.StatusOK || nlResp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("MLB Stats API returned status code %d", alResp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	var alStandings, nlStandings LeagueStandingsResponse
+	if err := json.NewDecoder(alResp.Body).Decode(&alStandings); err != nil {
+		http.Error(w, "Failed to decode AL standings JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := json.NewDecoder(nlResp.Body).Decode(&nlStandings); err != nil {
+		http.Error(w, "Failed to decode NL standings JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Combine AL and NL standings
+	combined := LeagueStandingsResponse{}
+	combined.Records = append(combined.Records, alStandings.Records...)
+	combined.Records = append(combined.Records, nlStandings.Records...)
 
 	isRaw := r.URL.Query().Get("raw") == "1"
 	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
 
 	if isRaw {
-		text := renderStandings(standings, "html")
+		text := renderStandings(combined, teamMap, "html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(text))
 	} else if isCurl {
-		text := renderStandings(standings, "ansi")
+		text := renderStandings(combined, teamMap, "ansi")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(text))
 	} else {
