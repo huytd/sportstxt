@@ -374,6 +374,21 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 			idStr := strconv.Itoa(game.GamePk)
 			link := fmt.Sprintf(`<a href="/game/%s" class="term-link">%s</a>`, idStr, idStr)
 			res = strings.Replace(res, idStr, link, 1)
+
+			awayTeam := game.Teams.Away.Team
+			homeTeam := game.Teams.Home.Team
+			awayName := awayTeam.Name
+			homeName := homeTeam.Name
+			if len(awayName) > 19 {
+				awayName = awayName[:18] + "."
+			}
+			if len(homeName) > 19 {
+				homeName = homeName[:18] + "."
+			}
+			awayLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, awayTeam.Id, awayName)
+			homeLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, homeTeam.Id, homeName)
+			res = strings.Replace(res, awayName, awayLink, 1)
+			res = strings.Replace(res, homeName, homeLink, 1)
 		}
 		return res
 	}
@@ -811,21 +826,39 @@ func renderGame(game GameFeedResponse, format string) string {
 		inningInfo = fmt.Sprintf(" - %s %s", game.LiveData.Linescore.InningState, game.LiveData.Linescore.CurrentInningOrdinal)
 	}
 
-	titleLine := fmt.Sprintf(" %s  %s %d  @  %s %d%s\n",
-		badgeStyled,
-		style(awayAbb, ansiBold, format),
-		awayScore,
-		style(homeAbb, ansiBold, format),
-		homeScore,
-		style(inningInfo, ansiYellow, format),
-	)
-
-	subTitleLine := fmt.Sprintf(" %s @ %s\n", awayName, homeName)
-
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
-	sb.WriteString(titleLine)
-	sb.WriteString(style(subTitleLine, ansiGray, format))
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	if format == "html" {
+		awayAbbLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link term-bold">%s</a>`, game.GameData.Teams.Away.ID, awayAbb)
+		homeAbbLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link term-bold">%s</a>`, game.GameData.Teams.Home.ID, homeAbb)
+		titleLine := fmt.Sprintf(" %s  %s %d  @  %s %d%s\n",
+			badgeStyled,
+			awayAbbLink,
+			awayScore,
+			homeAbbLink,
+			homeScore,
+			style(inningInfo, ansiYellow, format),
+		)
+		awayNameLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, game.GameData.Teams.Away.ID, awayName)
+		homeNameLink := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, game.GameData.Teams.Home.ID, homeName)
+		subTitleLine := fmt.Sprintf(`<span class="term-gray"> %s @ %s</span>`+"\n", awayNameLink, homeNameLink)
+		sb.WriteString(style("========================================================================\n", ansiCyan, format))
+		sb.WriteString(titleLine)
+		sb.WriteString(subTitleLine)
+		sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	} else {
+		titleLine := fmt.Sprintf(" %s  %s %d  @  %s %d%s\n",
+			badgeStyled,
+			style(awayAbb, ansiBold, format),
+			awayScore,
+			style(homeAbb, ansiBold, format),
+			homeScore,
+			style(inningInfo, ansiYellow, format),
+		)
+		subTitleLine := fmt.Sprintf(" %s @ %s\n", awayName, homeName)
+		sb.WriteString(style("========================================================================\n", ansiCyan, format))
+		sb.WriteString(titleLine)
+		sb.WriteString(style(subTitleLine, ansiGray, format))
+		sb.WriteString(style("========================================================================\n", ansiCyan, format))
+	}
 
 	sb.WriteString(renderDiamondAndMatchup(game, format))
 	if pStr := renderCurrentPitches(game, format); pStr != "" {
