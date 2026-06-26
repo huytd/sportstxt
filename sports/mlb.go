@@ -1341,13 +1341,8 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 				teamName = teamName[:19] + "."
 			}
 
-			// Build link for the team abbreviation
-			var displayAbbr string
-			if format == "html" {
-				displayAbbr = fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, t.Id, t.Abbreviation)
-			} else {
-				displayAbbr = t.Abbreviation
-			}
+			// Use placeholder for team link (replaced after formatting to avoid HTML escaping)
+			displayAbbr := fmt.Sprintf("<<TEAM_LINK_%d>>", t.Id)
 
 			// Highlight division leader
 			var rowStyle string
@@ -1390,12 +1385,8 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 			if len(teamName) > 20 {
 				teamName = teamName[:19] + "."
 			}
-			var displayAbbr string
-			if format == "html" {
-				displayAbbr = fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, t.Id, t.Abbreviation)
-			} else {
-				displayAbbr = t.Abbreviation
-			}
+			// Use placeholder for team link (replaced after formatting to avoid HTML escaping)
+			displayAbbr := fmt.Sprintf("<<TEAM_LINK_%d>>", t.Id)
 			gb := t.GB
 			if gb == "-" {
 				gb = "-"
@@ -1423,7 +1414,25 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
 
-	return sb.String()
+	result := sb.String()
+
+	// Post-process: replace team link placeholders with actual <a> tags (HTML only)
+	// This avoids having HTML escaped by style()/txt() via html.EscapeString()
+	if format == "html" {
+		for _, rec := range standings.Records {
+			for _, tr := range rec.TeamRecords {
+				tm, ok := teamMap[tr.Team.Id]
+				if !ok {
+					tm = TeamInfo{Abbreviation: tr.Team.Abbreviation}
+				}
+				placeholder := fmt.Sprintf("<<TEAM_LINK_%d>>", tr.Team.Id)
+				link := fmt.Sprintf(`<a href="/mlb/team/%d" class="term-link">%s</a>`, tr.Team.Id, tm.Abbreviation)
+				result = strings.ReplaceAll(result, placeholder, link)
+			}
+		}
+	}
+
+	return result
 }
 
 // fetchTeamGames fetches a team's schedule for a given date range
@@ -1664,11 +1673,13 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 	endDate := today.Format("2006-01-02")
 
 	games, err := fetchTeamGames(teamId, teamAbb, startDate, endDate)
+	var allGames []TeamGame
 	if err != nil {
 		sb.WriteString(style("\n WARNING: Could not fetch recent games.\n", ansiYellow, format))
 	} else if len(games) == 0 {
 		sb.WriteString(txt("\n No games found in the last 30 days (off-season).\n", format))
 	} else {
+		allGames = games
 		// Reverse to show most recent first
 		for i, j := 0, len(games)-1; i < j; i, j = i+1, j-1 {
 			games[i], games[j] = games[j], games[i]
@@ -1714,20 +1725,12 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 			// Build opponent with home/away indicator
 			oppDisplay := homeStr + opponent
 
-			// Build game link
+			// Use placeholder for game link (replaced after formatting to avoid HTML escaping)
 			var scoreDisplay string
 			if g.Score != "-" {
-				if format == "html" {
-					scoreDisplay = fmt.Sprintf(`<a href="/game/%d" class="term-link">%s</a>`, g.GamePk, g.Score)
-				} else {
-					scoreDisplay = g.Score
-				}
+				scoreDisplay = fmt.Sprintf("<<GAME_LINK_%d>>", g.GamePk)
 			} else {
-				if format == "html" {
-					scoreDisplay = fmt.Sprintf(`<a href="/game/%d" class="term-link">UPCOMING</a>`, g.GamePk)
-				} else {
-					scoreDisplay = "        "
-				}
+				scoreDisplay = fmt.Sprintf("<<UPCOMING_LINK_%d>>", g.GamePk)
 			}
 
 			row := fmt.Sprintf(" %-10s %-24s%4s  %-5s\n",
@@ -1748,7 +1751,22 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
 
-	return sb.String()
+	result := sb.String()
+
+	// Post-process: replace game link placeholders with actual <a> tags (HTML only)
+	if format == "html" {
+		for _, g := range allGames {
+			gameLink := fmt.Sprintf("<<GAME_LINK_%d>>", g.GamePk)
+			link := fmt.Sprintf(`<a href="/game/%d" class="term-link">%s</a>`, g.GamePk, g.Score)
+			result = strings.ReplaceAll(result, gameLink, link)
+
+			upcomingLink := fmt.Sprintf("<<UPCOMING_LINK_%d>>", g.GamePk)
+			upcomingA := fmt.Sprintf(`<a href="/game/%d" class="term-link">UPCOMING</a>`, g.GamePk)
+			result = strings.ReplaceAll(result, upcomingLink, upcomingA)
+		}
+	}
+
+	return result
 }
 
 func handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
