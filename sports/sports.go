@@ -141,14 +141,14 @@ func NewHandler() http.Handler {
 	return mux
 }
 
-// handleStandings handles the /standings route
+// handleStandings handles the /mlb/standings route
 func handleStandings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Fetch all team info to get abbreviations
+	// Fetch all team info to get abbreviations and city names
 	teamsUrl := "https://statsapi.mlb.com/api/v1/teams?sportId=1"
 	teamsResp, err := client.Get(teamsUrl)
 	if err != nil {
@@ -158,11 +158,7 @@ func handleStandings(w http.ResponseWriter, r *http.Request) {
 	defer teamsResp.Body.Close()
 
 	var allTeams struct {
-		Teams []struct {
-			Id           int    `json:"id"`
-			Name         string `json:"name"`
-			Abbreviation string `json:"abbreviation"`
-		} `json:"teams"`
+		Teams []TeamInfo `json:"teams"`
 	}
 	if err := json.NewDecoder(teamsResp.Body).Decode(&allTeams); err != nil {
 		http.Error(w, "Failed to decode teams JSON: "+err.Error(), http.StatusInternalServerError)
@@ -170,20 +166,16 @@ func handleStandings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build team lookup map
-	teamMap := make(map[int]struct {
-		Name         string
-		Abbreviation string
-	})
+	teamMap := make(map[int]TeamInfo)
 	for _, t := range allTeams.Teams {
-		teamMap[t.Id] = struct {
-			Name         string
-			Abbreviation string
-		}{t.Name, t.Abbreviation}
+		teamMap[t.Id] = t
 	}
 
+	seasonYear := time.Now().Year()
+
 	// Fetch standings for AL and NL separately using league-based endpoints
-	alUrl := "https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=103&season=2025&seasonStage=regularSeason&granularity=team"
-	nlUrl := "https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=104&season=2025&seasonStage=regularSeason&granularity=team"
+	alUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=103&season=%d&seasonStage=regularSeason&granularity=team", seasonYear)
+	nlUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/standings?sportId=1&leagueId=104&season=%d&seasonStage=regularSeason&granularity=team", seasonYear)
 
 	alResp, err := client.Get(alUrl)
 	if err != nil {
@@ -236,7 +228,7 @@ func handleStandings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleTeamPage handles the /team/{teamId} route
+// handleTeamPage handles the /mlb/team/{teamId} route
 func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 	teamId := r.PathValue("teamId")
 	teamIdInt, err := strconv.Atoi(teamId)
@@ -255,16 +247,33 @@ func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	var teamInfo struct {
-		Teams []struct {
-			Id           int    `json:"id"`
-			Name         string `json:"name"`
-			Abbreviation string `json:"abbreviation"`
-		} `json:"teams"`
+		Teams []TeamInfo `json:"teams"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&teamInfo); err != nil {
 		http.Error(w, "Failed to decode team info: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if len(teamInfo.Teams) == 0 {
+		http.Error(w, "Team not found", http.StatusNotFound)
+		return
+	}
+
+	team := teamInfo.Teams[0]
+
+	// Determine league display name
+	leagueName := "AL"
+	if strings.Contains(strings.ToLower(team.League.Name), "national") {
+		leagueName = "NL"
+	}
+	divisionName := team.Division.Name
+	if divisionName == "" {
+		divisionName = "Unknown"
+	}
+	cityName := team.LocationName
+	if cityName == "" {
+		cityName = "Unknown"
 	}
 
 	isRaw := r.URL.Query().Get("raw") == "1"
@@ -274,7 +283,7 @@ func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 		format = "ansi"
 	}
 
-	text := renderTeamPage(teamInfo.Teams[0].Id, teamInfo.Teams[0].Name, teamInfo.Teams[0].Abbreviation, format)
+	text := renderTeamPage(team.Id, team.Name, team.Abbreviation, cityName, leagueName, divisionName, format)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if format == "ansi" {
