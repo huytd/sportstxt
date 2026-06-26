@@ -1576,16 +1576,11 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 			if err := json.NewDecoder(resp.Body).Decode(&teamData); err != nil {
 				sb.WriteString(style("\n WARNING: Could not decode team stats.\n", ansiYellow, format))
 			} else {
-				statLabels := map[string]string{
-					"avg": "AVG", "obp": "OBP", "slg": "SLG", "ops": "OPS",
-					"homeRuns": "HR", "runs": "R", "hits": "H", "rbi": "RBI",
-					"stolenBases": "SB", "baseOnBalls": "BB", "strikeOuts": "SO",
-					"era": "ERA", "wins": "W", "losses": "L",
-					"saves": "SV", "whip": "WHIP", "inningsPitched": "IP",
-					"gamesPlayed": "GP", "gamesStarted": "GS", "completeGames": "CG",
-					"shutouts": "SHO", "holds": "HLD", "blownSaves": "BS",
-					"battingAverage": "AVG", "onBasePercentage": "OBP",
-					"slugPercentage": "SLG",
+				getStr := func(m map[string]interface{}, key string) string {
+					if v, ok := m[key]; ok {
+						return fmt.Sprintf("%v", v)
+					}
+					return "-"
 				}
 
 				for _, stat := range teamData.Stats {
@@ -1593,39 +1588,56 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 					if gn == "" || len(stat.Splits) == 0 {
 						continue
 					}
+					s := stat.Splits[0].Stat
 					if gn == "hitting" {
-						sb.WriteString(style("\n BATTING STATISTICS\n", ansiBold+ansiCyan, format))
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-						for k, v := range stat.Splits[0].Stat {
-							label := statLabels[k]
-							if label == "" {
-								label = k
-							}
-							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
-						}
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+						gp := getStr(s, "gamesPlayed")
+						avg := getStr(s, "avg")
+						obp := getStr(s, "obp")
+						slg := getStr(s, "slg")
+						ops := getStr(s, "ops")
+						r := getStr(s, "runs")
+						h := getStr(s, "hits")
+						hr := getStr(s, "homeRuns")
+						rbi := getStr(s, "rbi")
+						bb := getStr(s, "baseOnBalls")
+						so := getStr(s, "strikeOuts")
+						stl := getStr(s, "stolenBases")
+
+						sb.WriteString(style("\n BATTING\n", ansiBold+ansiCyan, format))
+						sb.WriteString(style(fmt.Sprintf(" %5s %5s %5s %5s %5s %5s %5s %4s %4s %4s %4s %4s\n", "GP", "AVG", "OBP", "SLG", "OPS", "R", "H", "HR", "RBI", "BB", "SO", "SB"), ansiBold, format))
+						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
+						sb.WriteString(txt(fmt.Sprintf(" %5s %5s %5s %5s %5s %5s %5s %4s %4s %4s %4s %4s\n", gp, avg, obp, slg, ops, r, h, hr, rbi, bb, so, stl), format))
+						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
 					} else if gn == "pitching" {
-						sb.WriteString(style("\n PITCHING STATISTICS\n", ansiBold+ansiCyan, format))
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-						for k, v := range stat.Splits[0].Stat {
-							label := statLabels[k]
-							if label == "" {
-								label = k
-							}
-							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
-						}
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+						w := getStr(s, "wins")
+						l := getStr(s, "losses")
+						era := getStr(s, "era")
+						whip := getStr(s, "whip")
+						ip := getStr(s, "inningsPitched")
+						so := getStr(s, "strikeOuts")
+						bb := getStr(s, "baseOnBalls")
+						hr := getStr(s, "homeRuns")
+						sv := getStr(s, "saves")
+						hld := getStr(s, "holds")
+						bs := getStr(s, "blownSaves")
+						avg := getStr(s, "avg")
+
+						sb.WriteString(style("\n PITCHING\n", ansiBold+ansiCyan, format))
+						sb.WriteString(style(fmt.Sprintf(" %4s %4s %5s %5s %6s %4s %4s %4s %4s %4s %4s %5s\n", "W", "L", "ERA", "WHIP", "IP", "SO", "BB", "HR", "SV", "HLD", "BS", "AVG"), ansiBold, format))
+						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
+						sb.WriteString(txt(fmt.Sprintf(" %4s %4s %5s %5s %6s %4s %4s %4s %4s %4s %4s %5s\n", w, l, era, whip, ip, so, bb, hr, sv, hld, bs, avg), format))
+						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
 					} else if gn == "fielding" {
-						sb.WriteString(style("\n FIELDING STATISTICS\n", ansiBold+ansiCyan, format))
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
-						for k, v := range stat.Splits[0].Stat {
-							label := statLabels[k]
-							if label == "" {
-								label = k
-							}
-							sb.WriteString(txt(fmt.Sprintf("  %-20s %v\n", label, v), format))
-						}
-						sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+						fpct := getStr(s, "fielding")
+						e := getStr(s, "errors")
+						dp := getStr(s, "doublePlays")
+						pb := getStr(s, "passedBall")
+
+						sb.WriteString(style("\n FIELDING\n", ansiBold+ansiCyan, format))
+						sb.WriteString(style(fmt.Sprintf(" %5s %5s %5s %5s\n", "FPCT", "E", "DP", "PB"), ansiBold, format))
+						sb.WriteString(style(" -----------------------------\n", ansiCyan, format))
+						sb.WriteString(txt(fmt.Sprintf(" %5s %5s %5s %5s\n", fpct, e, dp, pb), format))
+						sb.WriteString(style(" -----------------------------\n", ansiCyan, format))
 					}
 				}
 			}
