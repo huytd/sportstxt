@@ -1388,8 +1388,14 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 				gb = "-"
 			}
 
-			row := fmt.Sprintf(" %-4s %-20s %4d %4d  %6s  %4s\n",
-				displayAbbr, teamName, t.Wins, t.Losses, t.PCT, gb,
+			abbrLen := len(t.Abbreviation)
+			paddingSpaces := ""
+			if abbrLen < 4 {
+				paddingSpaces = strings.Repeat(" ", 4-abbrLen)
+			}
+
+			row := fmt.Sprintf(" %s%s %-20s %4d %4d  %6s  %4s\n",
+				displayAbbr, paddingSpaces, teamName, t.Wins, t.Losses, t.PCT, gb,
 			)
 			if rowStyle != "" {
 				sb.WriteString(style(row, rowStyle, format))
@@ -1420,8 +1426,13 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 			if gb == "-" {
 				gb = "-"
 			}
-			row := fmt.Sprintf(" %-4s %-20s %4d %4d  %6s  %4s\n",
-				displayAbbr, teamName, t.Wins, t.Losses, t.PCT, gb,
+			abbrLen := len(t.Abbreviation)
+			paddingSpaces := ""
+			if abbrLen < 4 {
+				paddingSpaces = strings.Repeat(" ", 4-abbrLen)
+			}
+			row := fmt.Sprintf(" %s%s %-20s %4d %4d  %6s  %4s\n",
+				displayAbbr, paddingSpaces, teamName, t.Wins, t.Losses, t.PCT, gb,
 			)
 			sb.WriteString(style(row, ansiGreen, format))
 		}
@@ -1607,6 +1618,44 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 					return "-"
 				}
 
+				formatVal := func(val string, width int, highlight bool) string {
+					disp := val
+					if highlight && val != "-" {
+						if format == "html" {
+							disp = fmt.Sprintf(`<span class="term-bold term-green term-highlight-better">%s</span>`, html.EscapeString(val))
+						} else {
+							disp = style(val, ansiBold+ansiGreen, format)
+						}
+					} else {
+						if format == "html" {
+							disp = html.EscapeString(val)
+						}
+					}
+					return pad(disp, width, false, format)
+				}
+
+				isAboveAvg := func(valStr string, threshold float64) bool {
+					if valStr == "-" {
+						return false
+					}
+					v, err := strconv.ParseFloat(valStr, 64)
+					if err != nil {
+						return false
+					}
+					return v > threshold
+				}
+
+				isBelowAvg := func(valStr string, threshold float64) bool {
+					if valStr == "-" {
+						return false
+					}
+					v, err := strconv.ParseFloat(valStr, 64)
+					if err != nil {
+						return false
+					}
+					return v < threshold
+				}
+
 				for _, stat := range teamData.Stats {
 					gn := stat.Group.DisplayName
 					if gn == "" || len(stat.Splits) == 0 {
@@ -1630,7 +1679,21 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 						sb.WriteString(style("\n BATTING\n", ansiBold+ansiCyan, format))
 						sb.WriteString(style(fmt.Sprintf(" %5s %5s %5s %5s %5s %5s %5s %4s %4s %4s %4s %4s\n", "GP", "AVG", "OBP", "SLG", "OPS", "R", "H", "HR", "RBI", "BB", "SO", "SB"), ansiBold, format))
 						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
-						sb.WriteString(txt(fmt.Sprintf(" %5s %5s %5s %5s %5s %5s %5s %4s %4s %4s %4s %4s\n", gp, avg, obp, slg, ops, r, h, hr, rbi, bb, so, stl), format))
+						row := fmt.Sprintf(" %s %s %s %s %s %s %s %s %s %s %s %s\n",
+							formatVal(gp, 5, false),
+							formatVal(avg, 5, isAboveAvg(avg, 0.243)),
+							formatVal(obp, 5, isAboveAvg(obp, 0.319)),
+							formatVal(slg, 5, isAboveAvg(slg, 0.400)),
+							formatVal(ops, 5, isAboveAvg(ops, 0.719)),
+							formatVal(r, 5, false),
+							formatVal(h, 5, false),
+							formatVal(hr, 4, false),
+							formatVal(rbi, 4, false),
+							formatVal(bb, 4, false),
+							formatVal(so, 4, false),
+							formatVal(stl, 4, false),
+						)
+						sb.WriteString(row)
 						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
 					} else if gn == "pitching" {
 						w := getStr(s, "wins")
@@ -1649,7 +1712,21 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 						sb.WriteString(style("\n PITCHING\n", ansiBold+ansiCyan, format))
 						sb.WriteString(style(fmt.Sprintf(" %4s %4s %5s %5s %6s %4s %4s %4s %4s %4s %4s %5s\n", "W", "L", "ERA", "WHIP", "IP", "SO", "BB", "HR", "SV", "HLD", "BS", "AVG"), ansiBold, format))
 						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
-						sb.WriteString(txt(fmt.Sprintf(" %4s %4s %5s %5s %6s %4s %4s %4s %4s %4s %4s %5s\n", w, l, era, whip, ip, so, bb, hr, sv, hld, bs, avg), format))
+						row := fmt.Sprintf(" %s %s %s %s %s %s %s %s %s %s %s %s\n",
+							formatVal(w, 4, false),
+							formatVal(l, 4, false),
+							formatVal(era, 5, isBelowAvg(era, 4.18)),
+							formatVal(whip, 5, isBelowAvg(whip, 1.308)),
+							formatVal(ip, 6, false),
+							formatVal(so, 4, false),
+							formatVal(bb, 4, false),
+							formatVal(hr, 4, false),
+							formatVal(sv, 4, false),
+							formatVal(hld, 4, false),
+							formatVal(bs, 4, false),
+							formatVal(avg, 5, isBelowAvg(avg, 0.243)),
+						)
+						sb.WriteString(row)
 						sb.WriteString(style(" ------------------------------------------------------------------------\n", ansiCyan, format))
 					} else if gn == "fielding" {
 						fpct := getStr(s, "fielding")
@@ -1660,7 +1737,13 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 						sb.WriteString(style("\n FIELDING\n", ansiBold+ansiCyan, format))
 						sb.WriteString(style(fmt.Sprintf(" %5s %5s %5s %5s\n", "FPCT", "E", "DP", "PB"), ansiBold, format))
 						sb.WriteString(style(" -----------------------------\n", ansiCyan, format))
-						sb.WriteString(txt(fmt.Sprintf(" %5s %5s %5s %5s\n", fpct, e, dp, pb), format))
+						row := fmt.Sprintf(" %s %s %s %s\n",
+							formatVal(fpct, 5, isAboveAvg(fpct, 0.985)),
+							formatVal(e, 5, false),
+							formatVal(dp, 5, false),
+							formatVal(pb, 5, false),
+						)
+						sb.WriteString(row)
 						sb.WriteString(style(" -----------------------------\n", ansiCyan, format))
 					}
 				}
