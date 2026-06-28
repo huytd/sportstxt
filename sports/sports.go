@@ -433,7 +433,9 @@ const htmlPage = `<!DOCTYPE html>
             font-family: inherit;
             font-size: 15px;
             line-height: 1.6;
-            white-space: pre;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
             position: relative;
             overflow-x: auto;
             --scrollbar-thumb: var(--term-border);
