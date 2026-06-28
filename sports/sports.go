@@ -120,6 +120,43 @@ func stripANSIAndHTML(s string) string {
 	return sb.String()
 }
 
+// isBrowserRequest returns true if the request is from a web browser (not curl and not requesting raw content).
+func isBrowserRequest(r *http.Request) bool {
+	isRaw := r.URL.Query().Get("raw") == "1"
+	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
+	return !isRaw && !isCurl
+}
+
+// serveHTMLWrapper serves the main htmlPage shell if it's a browser request, and returns true.
+func serveHTMLWrapper(w http.ResponseWriter, r *http.Request) bool {
+	if isBrowserRequest(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(htmlPage))
+		return true
+	}
+	return false
+}
+
+// getFormat returns the rendering format ("html" or "ansi") based on user agent and raw query param.
+func getFormat(r *http.Request) string {
+	isRaw := r.URL.Query().Get("raw") == "1"
+	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
+	if isCurl && !isRaw {
+		return "ansi"
+	}
+	return "html"
+}
+
+// writeResponse sets the appropriate content type and writes the output text.
+func writeResponse(w http.ResponseWriter, format string, text string) {
+	if format == "ansi" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	}
+	w.Write([]byte(text))
+}
+
 // NewHandler constructs and returns the HTTP handler with all registered routes.
 func NewHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -146,6 +183,10 @@ func NewHandler() http.Handler {
 func handleStandings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
 		return
 	}
 
@@ -212,21 +253,9 @@ func handleStandings(w http.ResponseWriter, r *http.Request) {
 	combined.Records = append(combined.Records, alStandings.Records...)
 	combined.Records = append(combined.Records, nlStandings.Records...)
 
-	isRaw := r.URL.Query().Get("raw") == "1"
-	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
-
-	if isRaw {
-		text := renderStandings(combined, teamMap, "html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(text))
-	} else if isCurl {
-		text := renderStandings(combined, teamMap, "ansi")
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(text))
-	} else {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(htmlPage))
-	}
+	format := getFormat(r)
+	text := renderStandings(combined, teamMap, format)
+	writeResponse(w, format, text)
 }
 
 // handleTeamPage handles the /mlb/team/{teamId} route
@@ -235,6 +264,10 @@ func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 	teamIdInt, err := strconv.Atoi(teamId)
 	if err != nil || teamIdInt <= 0 {
 		http.Error(w, "Invalid team ID", http.StatusBadRequest)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
 		return
 	}
 
@@ -277,26 +310,19 @@ func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 		cityName = "Unknown"
 	}
 
-	isRaw := r.URL.Query().Get("raw") == "1"
-	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
-	format := "html"
-	if isCurl && !isRaw {
-		format = "ansi"
-	}
-
+	format := getFormat(r)
 	text := renderTeamPage(team.Id, team.Name, team.Abbreviation, cityName, leagueName, divisionName, format)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if format == "ansi" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	}
-	w.Write([]byte(text))
+	writeResponse(w, format, text)
 }
 
 // handleCompareTeams handles the /mlb/compare route
 func handleCompareTeams(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
 		return
 	}
 
@@ -324,28 +350,10 @@ func handleCompareTeams(w http.ResponseWriter, r *http.Request) {
 	team1Id, _ := strconv.Atoi(team1)
 	team2Id, _ := strconv.Atoi(team2)
 
-	isRaw := r.URL.Query().Get("raw") == "1"
-	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
-	format := "html"
-	if isCurl && !isRaw {
-		format = "ansi"
-	}
-
-	if format == "html" && !isRaw {
-		// Serve the html wrapper
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(htmlPage))
-		return
-	}
-
 	// In raw HTML or ANSI modes, generate comparison output
+	format := getFormat(r)
 	text := renderCompareTeams(team1Id, team2Id, allTeams.Teams, format)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if format == "ansi" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	}
-	w.Write([]byte(text))
+	writeResponse(w, format, text)
 }
 
 const htmlPage = `<!DOCTYPE html>

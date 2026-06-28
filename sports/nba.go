@@ -744,6 +744,10 @@ func handleNBASchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if serveHTMLWrapper(w, r) {
+		return
+	}
+
 	tzStr := r.URL.Query().Get("tz")
 	if tzStr == "" {
 		tzStr = "America/Los_Angeles"
@@ -778,27 +782,19 @@ func handleNBASchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isRaw := r.URL.Query().Get("raw") == "1"
-	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
-
-	if isRaw {
-		text := renderNBASchedule(sched, dateStr, "html", loc)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(text))
-	} else if isCurl {
-		text := renderNBASchedule(sched, dateStr, "ansi", loc)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(text))
-	} else {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(htmlPage))
-	}
+	format := getFormat(r)
+	text := renderNBASchedule(sched, dateStr, format, loc)
+	writeResponse(w, format, text)
 }
 
 func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 	gamePk := r.PathValue("gamePk")
 	if gamePk == "" {
 		http.Error(w, "Missing game ID", http.StatusBadRequest)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
 		return
 	}
 
@@ -810,12 +806,7 @@ func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
-	isRaw := r.URL.Query().Get("raw") == "1"
-	format := "html"
-	if isCurl && !isRaw {
-		format = "ansi"
-	}
+	format := getFormat(r)
 
 	if resp.StatusCode != http.StatusOK {
 		var sb strings.Builder
@@ -829,11 +820,7 @@ func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 			sb.WriteString(style("========================================================================\n", ansiRed, format))
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if format == "ansi" {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		}
-		w.Write([]byte(sb.String()))
+		writeResponse(w, format, sb.String())
 		return
 	}
 
@@ -843,18 +830,8 @@ func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if isRaw {
-		text := renderNBAGame(summary, "html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(text))
-	} else if isCurl {
-		text := renderNBAGame(summary, "ansi")
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(text))
-	} else {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(htmlPage))
-	}
+	text := renderNBAGame(summary, format)
+	writeResponse(w, format, text)
 }
 
 func handleAPINBAGames(w http.ResponseWriter, r *http.Request) {
