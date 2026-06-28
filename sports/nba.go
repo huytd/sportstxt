@@ -178,14 +178,11 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
 	// Sports Selector row
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
-	if format == "html" {
-		sb.WriteString(txt("                         ", format) + fmt.Sprintf(`<a href="/?date=%s" class="term-link">[MLB]</a>`, dateStr) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + "\n")
-	} else {
+	if format != "html" {
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + "\n")
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
-
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	

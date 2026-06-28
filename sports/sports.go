@@ -131,6 +131,7 @@ func NewHandler() http.Handler {
 	// MLB Standings and Team Routes
 	mux.HandleFunc("GET /mlb/standings", handleStandings)
 	mux.HandleFunc("GET /mlb/team/{teamId}", handleTeamPage)
+	mux.HandleFunc("GET /mlb/compare", handleCompareTeams)
 
 	// NBA Routes
 	mux.HandleFunc("GET /nba", handleNBASchedule)
@@ -292,6 +293,61 @@ func handleTeamPage(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(text))
 }
 
+// handleCompareTeams handles the /mlb/compare route
+func handleCompareTeams(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Fetch all team info to get list of teams
+	teamsUrl := "https://statsapi.mlb.com/api/v1/teams?sportId=1"
+	teamsResp, err := client.Get(teamsUrl)
+	if err != nil {
+		http.Error(w, "Failed to connect to MLB Stats API: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer teamsResp.Body.Close()
+
+	var allTeams struct {
+		Teams []TeamInfo `json:"teams"`
+	}
+	if err := json.NewDecoder(teamsResp.Body).Decode(&allTeams); err != nil {
+		http.Error(w, "Failed to decode teams JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse query parameters
+	team1 := r.URL.Query().Get("team1")
+	team2 := r.URL.Query().Get("team2")
+
+	team1Id, _ := strconv.Atoi(team1)
+	team2Id, _ := strconv.Atoi(team2)
+
+	isRaw := r.URL.Query().Get("raw") == "1"
+	isCurl := strings.Contains(strings.ToLower(r.UserAgent()), "curl")
+	format := "html"
+	if isCurl && !isRaw {
+		format = "ansi"
+	}
+
+	if format == "html" && !isRaw {
+		// Serve the html wrapper
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(htmlPage))
+		return
+	}
+
+	// In raw HTML or ANSI modes, generate comparison output
+	text := renderCompareTeams(team1Id, team2Id, allTeams.Teams, format)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if format == "ansi" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.Write([]byte(text))
+}
+
 const htmlPage = `<!DOCTYPE html>
 <html>
 <head>
@@ -315,6 +371,7 @@ const htmlPage = `<!DOCTYPE html>
             --term-gray: #6b7280;
             --term-link-hover: #000000;
             --color-primary: var(--term-green);
+            --term-highlight-bg: rgba(13, 107, 56, 0.12);
         }
 
         @media (prefers-color-scheme: dark) {
@@ -331,6 +388,7 @@ const htmlPage = `<!DOCTYPE html>
                 --term-magenta: #d946ef;
                 --term-gray: #555866;
                 --term-link-hover: #ffffff;
+                --term-highlight-bg: rgba(57, 255, 20, 0.18);
             }
         }
 
@@ -399,6 +457,11 @@ const htmlPage = `<!DOCTYPE html>
         .term-magenta { color: var(--term-magenta); }
         .term-gray { color: var(--term-gray); }
         .term-bold { font-weight: bold; }
+        .term-highlight-better {
+            background-color: var(--term-highlight-bg);
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
 
         /* Links styling */
         .term-link {
@@ -507,6 +570,7 @@ const htmlPage = `<!DOCTYPE html>
         <nav style="display: flex; gap: 12px; margin-bottom: 15px;">
             <a href="/" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Scoreboard</a>
             <a href="/mlb/standings" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Standings</a>
+            <a href="/mlb/compare" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Compare Teams</a>
             <a href="/mlb/team/130" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Teams</a>
             <a href="/nba" class="term-link" style="padding: 6px 14px; border-radius: 4px;">NBA</a>
         </nav>

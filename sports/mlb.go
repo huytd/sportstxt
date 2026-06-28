@@ -3,6 +3,7 @@ package sports
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strconv"
@@ -267,14 +268,11 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 	prevDateStr := currentDate.AddDate(0, 0, -1).Format("2006-01-02")
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
-	// Sports Selector row
-	if format == "html" {
-		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, dateStr) + "\n")
-	} else {
+	if format != "html" {
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 
@@ -1280,7 +1278,6 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 
 	loc := time.Now().Location()
 	zoneName, _ := time.Now().In(loc).Zone()
-	now := time.Now().Format("2006-01-02")
 	seasonYear := time.Now().Year()
 	title := fmt.Sprintf("MLB STANDINGS (%d) - %s", seasonYear, zoneName)
 	padding := (80 - len(title)) / 2
@@ -1288,14 +1285,11 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 		padding = 0
 	}
 
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
-	// Sports Selector row with navigation
-	if format == "html" {
-		sb.WriteString(txt(" ", format) + `<a href="/" class="term-link">[SCOREBOARD]</a>` + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, now) + "\n")
-	} else {
-		sb.WriteString(txt(" [SCOREBOARD]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+	if format != "html" {
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(txt(" [SCOREBOARD]   [COMPARE]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
@@ -1557,14 +1551,11 @@ func renderTeamPage(teamId int, teamName string, teamAbb string, teamCity string
 		padding = 0
 	}
 
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
-	// Navigation row
-	if format == "html" {
-		sb.WriteString(txt(" ", format) + `<a href="/" class="term-link">[SCOREBOARD]</a>` + txt("   ", format) + `<a href="/mlb/standings" class="term-link">[STANDINGS]</a>` + txt("   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">[NBA]</a>`, time.Now().Format("2006-01-02")) + "\n")
-	} else {
-		sb.WriteString(txt(" [SCOREBOARD]   [STANDINGS]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+	if format != "html" {
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(txt(" [SCOREBOARD]   [STANDINGS]   [COMPARE]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	}
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
@@ -1813,4 +1804,484 @@ func handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// pad adjusts string length excluding HTML and ANSI codes
+func pad(text string, width int, left bool, format string) string {
+	raw := stripANSIAndHTML(text)
+	diff := len(text) - len(raw)
+	targetWidth := width + diff
+	if left {
+		return fmt.Sprintf("%-*s", targetWidth, text)
+	}
+	return fmt.Sprintf("%*s", targetWidth, text)
+}
+
+func compareStats(val1, val2 string, lowerIsBetter bool) (better1, better2 bool) {
+	if val1 == "-" || val2 == "-" {
+		return false, false
+	}
+	f1, err1 := strconv.ParseFloat(strings.TrimSpace(val1), 64)
+	f2, err2 := strconv.ParseFloat(strings.TrimSpace(val2), 64)
+	if err1 != nil || err2 != nil {
+		return false, false
+	}
+	if f1 == f2 {
+		return false, false
+	}
+	if lowerIsBetter {
+		return f1 < f2, f2 < f1
+	}
+	return f1 > f2, f2 > f1
+}
+
+type statField struct {
+	label         string
+	key           string
+	lowerIsBetter bool
+}
+
+var battingFields = []statField{
+	{"Games Played", "gamesPlayed", false},
+	{"Batting Average", "avg", false},
+	{"On-Base Pct (OBP)", "obp", false},
+	{"Slugging Pct (SLG)", "slg", false},
+	{"On-Base+Slugging (OPS)", "ops", false},
+	{"Runs", "runs", false},
+	{"Hits", "hits", false},
+	{"Home Runs", "homeRuns", false},
+	{"Runs Batted In (RBI)", "rbi", false},
+	{"Walks (BB)", "baseOnBalls", false},
+	{"Strikeouts (SO)", "strikeOuts", true},
+	{"Stolen Bases", "stolenBases", false},
+}
+
+var pitchingFields = []statField{
+	{"Wins", "wins", false},
+	{"Losses", "losses", true},
+	{"Earned Run Avg (ERA)", "era", true},
+	{"WHIP", "whip", true},
+	{"Innings Pitched", "inningsPitched", false},
+	{"Strikeouts (SO)", "strikeOuts", false},
+	{"Walks (BB)", "baseOnBalls", true},
+	{"Home Runs Allowed", "homeRuns", true},
+	{"Saves", "saves", false},
+	{"Holds", "holds", false},
+	{"Blown Saves", "blownSaves", true},
+	{"Opponent Avg", "avg", true},
+}
+
+var fieldingFields = []statField{
+	{"Fielding Pct", "fielding", false},
+	{"Errors", "errors", true},
+	{"Double Plays", "doublePlays", false},
+	{"Passed Balls", "passedBall", true},
+}
+
+func formatStatLine(label, key, group string, stats1, stats2 map[string]map[string]string, lowerIsBetter bool, format string) string {
+	val1 := "-"
+	if m, ok := stats1[group]; ok {
+		if v, ok := m[key]; ok {
+			val1 = v
+		}
+	}
+	val2 := "-"
+	if m, ok := stats2[group]; ok {
+		if v, ok := m[key]; ok {
+			val2 = v
+		}
+	}
+
+	better1, better2 := compareStats(val1, val2, lowerIsBetter)
+
+	disp1 := val1
+	disp2 := val2
+
+	if better1 {
+		if format == "html" {
+			disp1 = fmt.Sprintf(`<span class="term-bold term-green term-highlight-better">%s</span>`, html.EscapeString(val1))
+		} else {
+			disp1 = style(val1, ansiBold+ansiGreen, format)
+		}
+	} else if better2 {
+		if format == "html" {
+			disp2 = fmt.Sprintf(`<span class="term-bold term-green term-highlight-better">%s</span>`, html.EscapeString(val2))
+		} else {
+			disp2 = style(val2, ansiBold+ansiGreen, format)
+		}
+	}
+
+	lbl := "  " + label
+	col1 := pad(lbl, 26, true, format)
+	col2 := pad(disp1, 27, true, format)
+	col3 := pad(disp2, 27, true, format)
+
+	return col1 + col2 + col3 + "\n"
+}
+
+func fetchStatsForTeam(teamId int, seasonYear int) (*TeamStatsResult, error) {
+	statsUrl := fmt.Sprintf("https://statsapi.mlb.com/api/v1/teams/%d/stats?season=%d&gameType=R&stats=season&group=hitting,pitching,fielding", teamId, seasonYear)
+	resp, err := client.Get(statsUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var res TeamStatsResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+type TeamStatsResult struct {
+	Stats []struct {
+		Type struct {
+			DisplayName string `json:"displayName"`
+		} `json:"type"`
+		Group struct {
+			DisplayName string `json:"displayName"`
+		} `json:"group"`
+		Splits []struct {
+			Stat map[string]interface{} `json:"stat"`
+		} `json:"splits"`
+	} `json:"stats"`
+}
+
+func extractStatsMap(res *TeamStatsResult) map[string]map[string]string {
+	m := make(map[string]map[string]string)
+	if res == nil {
+		return m
+	}
+	for _, stat := range res.Stats {
+		gn := stat.Group.DisplayName
+		if gn == "" || len(stat.Splits) == 0 {
+			continue
+		}
+		s := stat.Splits[0].Stat
+		m[gn] = make(map[string]string)
+		for k, v := range s {
+			m[gn][k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return m
+}
+
+func dateShort(d string) string {
+	if len(d) >= 10 {
+		return d[5:10]
+	}
+	return d
+}
+
+func renderCompareTeams(team1Id, team2Id int, allTeams []TeamInfo, format string) string {
+	var sb strings.Builder
+
+	nowTime := time.Now()
+	seasonYear := nowTime.Year()
+
+	title := "MLB TEAM COMPARISON"
+	if team1Id > 0 && team2Id > 0 {
+		var abb1, abb2 string
+		for _, t := range allTeams {
+			if t.Id == team1Id {
+				abb1 = t.Abbreviation
+			}
+			if t.Id == team2Id {
+				abb2 = t.Abbreviation
+			}
+		}
+		if abb1 != "" && abb2 != "" {
+			title = fmt.Sprintf("MLB TEAM COMPARISON: %s VS %s", abb1, abb2)
+		}
+	}
+
+	padding := (80 - len(title)) / 2
+	if padding < 0 {
+		padding = 0
+	}
+
+	if format != "html" {
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(txt(" [SCOREBOARD]   [STANDINGS]   [COMPARE]   ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	}
+	sb.WriteString(txt(strings.Repeat(" ", padding), format))
+	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+
+	// Find the compared teams in the list
+	var teamA, teamB *TeamInfo
+	for i := range allTeams {
+		if allTeams[i].Id == team1Id {
+			teamA = &allTeams[i]
+		}
+		if allTeams[i].Id == team2Id {
+			teamB = &allTeams[i]
+		}
+	}
+
+	// 1. Selector Form (Only for HTML format)
+	if format == "html" {
+		var opt1, opt2 strings.Builder
+		opt1.WriteString(`<option value="">-- Select Team 1 --</option>`)
+		opt2.WriteString(`<option value="">-- Select Team 2 --</option>`)
+		for _, t := range allTeams {
+			sel1 := ""
+			if t.Id == team1Id {
+				sel1 = "selected"
+			}
+			sel2 := ""
+			if t.Id == team2Id {
+				sel2 = "selected"
+			}
+			opt1.WriteString(fmt.Sprintf(`<option value="%d" %s>%s (%s)</option>`, t.Id, sel1, html.EscapeString(t.Name), html.EscapeString(t.Abbreviation)))
+			opt2.WriteString(fmt.Sprintf(`<option value="%d" %s>%s (%s)</option>`, t.Id, sel2, html.EscapeString(t.Name), html.EscapeString(t.Abbreviation)))
+		}
+
+		sb.WriteString(`<div>
+  <form id="compare-form" onsubmit="event.preventDefault(); const t1=document.getElementById('team1-select').value; const t2=document.getElementById('team2-select').value; if(t1&amp;&amp;t2){const href='/mlb/compare?team1='+t1+'&amp;team2='+t2; history.pushState(null,'',href); updateStatus(); document.getElementById('terminal-content').innerHTML='RETRIEVING FEED...'; fetchTerminalData();}" style="margin: 15px 0; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+    <div>
+      <label for="team1-select" style="font-weight: bold; margin-right: 8px;">Team 1:</label>
+      <select id="team1-select" style="background: var(--term-container-bg); color: var(--color-primary); border: 1px solid var(--term-border); font-family: inherit; font-size: 14px; padding: 4px 8px; border-radius: 4px;">
+` + opt1.String() + `
+      </select>
+    </div>
+    <div>
+      <label for="team2-select" style="font-weight: bold; margin-right: 8px;">Team 2:</label>
+      <select id="team2-select" style="background: var(--term-container-bg); color: var(--color-primary); border: 1px solid var(--term-border); font-family: inherit; font-size: 14px; padding: 4px 8px; border-radius: 4px;">
+` + opt2.String() + `
+      </select>
+    </div>
+    <div>
+      <label style="font-weight: bold; visibility: hidden;">Compare</label>
+      <button type="submit" style="background: var(--color-primary); color: var(--term-container-bg); border: 1px solid var(--term-border); font-family: inherit; font-size: 14px; padding: 4px 12px; border-radius: 4px; cursor: pointer;">Compare</button>
+    </div>
+  </form>
+</div>`)
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	} else {
+		// In curl/ANSI format, list options or show command help
+		if teamA == nil || teamB == nil {
+			sb.WriteString(style("\n HOW TO COMPARE TEAMS:\n", ansiBold+ansiCyan, format))
+			sb.WriteString(txt(" Specify team IDs in query parameters: ?team1=<id1>&team2=<id2>\n", format))
+			sb.WriteString(txt(" Example: curl \"http://localhost:9090/mlb/compare?team1=130&team2=147\"\n\n", format))
+			sb.WriteString(style(" AVAILABLE MLB TEAMS:\n", ansiBold+ansiCyan, format))
+			sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+			for i, t := range allTeams {
+				sb.WriteString(txt(fmt.Sprintf("  %-4d: %-30s (%s)", t.Id, t.Name, t.Abbreviation), format))
+				if (i+1)%2 == 0 {
+					sb.WriteString("\n")
+				} else {
+					sb.WriteString("   | ")
+				}
+			}
+			if len(allTeams)%2 != 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+			return sb.String()
+		}
+	}
+
+	if teamA == nil || teamB == nil {
+		if format == "html" {
+			sb.WriteString(style("\n Select two teams above to compare their season statistics.\n\n", ansiYellow, format))
+			sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		}
+		return sb.String()
+	}
+
+	// Fetch Stats and Recent Games concurrently
+	type fetchRes struct {
+		stats *TeamStatsResult
+		err   error
+	}
+	type gamesRes struct {
+		games []TeamGame
+		err   error
+	}
+
+	chStats1 := make(chan fetchRes, 1)
+	chStats2 := make(chan fetchRes, 1)
+	chGames1 := make(chan gamesRes, 1)
+	chGames2 := make(chan gamesRes, 1)
+
+	go func() {
+		s, err := fetchStatsForTeam(team1Id, seasonYear)
+		chStats1 <- fetchRes{s, err}
+	}()
+	go func() {
+		s, err := fetchStatsForTeam(team2Id, seasonYear)
+		chStats2 <- fetchRes{s, err}
+	}()
+
+	today := time.Now()
+	startDate := today.AddDate(0, 0, -30).Format("2006-01-02")
+	endDate := today.Format("2006-01-02")
+
+	go func() {
+		g, err := fetchTeamGames(team1Id, startDate, endDate)
+		chGames1 <- gamesRes{g, err}
+	}()
+	go func() {
+		g, err := fetchTeamGames(team2Id, startDate, endDate)
+		chGames2 <- gamesRes{g, err}
+	}()
+
+	resStats1 := <-chStats1
+	resStats2 := <-chStats2
+	resGames1 := <-chGames1
+	resGames2 := <-chGames2
+
+	var stats1, stats2 map[string]map[string]string
+	if resStats1.err == nil {
+		stats1 = extractStatsMap(resStats1.stats)
+	}
+	if resStats2.err == nil {
+		stats2 = extractStatsMap(resStats2.stats)
+	}
+
+	// 2. Team Info Comparison
+	sb.WriteString(style("\n TEAM INFORMATION\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	
+	headerText := fmt.Sprintf("  %-24s %-27s %-27s\n", "STAT", teamA.Abbreviation, teamB.Abbreviation)
+	sb.WriteString(style(headerText, ansiBold, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	sb.WriteString(txt(fmt.Sprintf("  %-24s %-27s %-27s\n", "Team Name:", teamA.Name, teamB.Name), format))
+	sb.WriteString(txt(fmt.Sprintf("  %-24s %-27s %-27s\n", "City:", teamA.LocationName, teamB.LocationName), format))
+	
+	leagueA := "AL"
+	if strings.Contains(strings.ToLower(teamA.League.Name), "national") {
+		leagueA = "NL"
+	}
+	leagueB := "AL"
+	if strings.Contains(strings.ToLower(teamB.League.Name), "national") {
+		leagueB = "NL"
+	}
+	sb.WriteString(txt(fmt.Sprintf("  %-24s %-27s %-27s\n", "League:", leagueA, leagueB), format))
+	sb.WriteString(txt(fmt.Sprintf("  %-24s %-27s %-27s\n", "Division:", teamA.Division.Name, teamB.Division.Name), format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	// 3. Batting Stats
+	sb.WriteString(style("\n BATTING STATS\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	for _, f := range battingFields {
+		sb.WriteString(formatStatLine(f.label, f.key, "hitting", stats1, stats2, f.lowerIsBetter, format))
+	}
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	// 4. Pitching Stats
+	sb.WriteString(style("\n PITCHING STATS\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	for _, f := range pitchingFields {
+		sb.WriteString(formatStatLine(f.label, f.key, "pitching", stats1, stats2, f.lowerIsBetter, format))
+	}
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	// 5. Fielding Stats
+	sb.WriteString(style("\n FIELDING STATS\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	for _, f := range fieldingFields {
+		sb.WriteString(formatStatLine(f.label, f.key, "fielding", stats1, stats2, f.lowerIsBetter, format))
+	}
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	// 6. Recent Games (Side by Side)
+	games1 := resGames1.games
+	games2 := resGames2.games
+
+	// Reverse to show most recent first
+	for i, j := 0, len(games1)-1; i < j; i, j = i+1, j-1 {
+		games1[i], games1[j] = games1[j], games1[i]
+	}
+	for i, j := 0, len(games2)-1; i < j; i, j = i+1, j-1 {
+		games2[i], games2[j] = games2[j], games2[i]
+	}
+
+	maxGames := len(games1)
+	if len(games2) > maxGames {
+		maxGames = len(games2)
+	}
+	if maxGames > 5 {
+		maxGames = 5
+	}
+
+	sb.WriteString(style("\n RECENT GAMES (Last 30 Days)\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	headerA := fmt.Sprintf(" %s RECENT GAMES", teamA.Abbreviation)
+	headerB := fmt.Sprintf(" %s RECENT GAMES", teamB.Abbreviation)
+	sb.WriteString(style(pad(headerA, 39, true, format)+"|"+pad(headerB, 40, true, format)+"\n", ansiBold, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	formatGameColumn := func(g *TeamGame, format string) string {
+		if g == nil {
+			return "  -"
+		}
+		homeStr := "(H) "
+		if !g.IsHome {
+			homeStr = "(A) "
+		}
+		opponent := g.Opponent
+		if len(opponent) > 12 {
+			opponent = opponent[:9] + "..."
+		}
+		var wlDisplay string
+		switch g.Result {
+		case "W":
+			wlDisplay = style("W", ansiGreen, format)
+		case "L":
+			wlDisplay = style("L", ansiRed, format)
+		case "T":
+			wlDisplay = "T"
+		default:
+			if g.State == "In Progress" || g.State == "Live" {
+				wlDisplay = style("LIVE", ansiGreen, format)
+			} else {
+				wlDisplay = style("UPC", ansiGray, format)
+			}
+		}
+
+		scoreStr := g.Score
+		if scoreStr != "-" {
+			if format == "html" {
+				scoreStr = fmt.Sprintf(`<a href="/game/%d" class="term-link">%s</a>`, g.GamePk, scoreStr)
+			}
+		} else {
+			if format == "html" {
+				scoreStr = fmt.Sprintf(`<a href="/game/%d" class="term-link">UPCOMING</a>`, g.GamePk)
+			} else {
+				scoreStr = "UPCOMING"
+			}
+		}
+
+		colText := fmt.Sprintf(" %-5s %s%-12s %s  %s", dateShort(g.Date), homeStr, opponent, wlDisplay, scoreStr)
+		return colText
+	}
+
+	for i := 0; i < maxGames; i++ {
+		var g1, g2 *TeamGame
+		if i < len(games1) {
+			g1 = &games1[i]
+		}
+		if i < len(games2) {
+			g2 = &games2[i]
+		}
+
+		colA := formatGameColumn(g1, format)
+		colB := formatGameColumn(g2, format)
+
+		sb.WriteString(pad(colA, 39, true, format) + "|" + pad(colB, 40, true, format) + "\n")
+	}
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	if format == "ansi" {
+		sb.WriteString(txt(" Run 'curl http://localhost:9090/' to return to the scoreboard.\n", format))
+		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	}
+
+	return sb.String()
 }
