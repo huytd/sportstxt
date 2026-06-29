@@ -6,6 +6,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -786,7 +787,7 @@ func colorizePitchSequence(seq string, format string) string {
 }
 
 // renderGame creates the detailed view of a game
-func renderGame(game GameFeedResponse, format string) string {
+func renderGame(game GameFeedResponse, gamePk int, format string) string {
 	var sb strings.Builder
 
 	awayName := game.GameData.Teams.Away.Name
@@ -1057,6 +1058,12 @@ func renderGame(game GameFeedResponse, format string) string {
 		sb.WriteString(style("========================================================================\n", ansiCyan, format))
 	}
 
+	// Betting Odds Section (if available)
+	oddsInfo := fetchBettingOdds(gamePk, awayName, homeName, awayAbb, homeAbb, format)
+	if oddsInfo != "" {
+		sb.WriteString(oddsInfo)
+	}
+
 	return sb.String()
 }
 
@@ -1156,7 +1163,9 @@ func handleGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text := renderGame(game, format)
+	// Parse gamePk to int for betting odds
+	gamePkInt, _ := strconv.Atoi(gamePk)
+	text := renderGame(game, gamePkInt, format)
 	writeResponse(w, format, text)
 }
 
@@ -2345,4 +2354,244 @@ func renderCompareTeams(team1Id, team2Id int, allTeams []TeamInfo, format string
 	}
 
 	return sb.String()
+}
+
+// OddsAPIResponse represents response from The Odds API
+type OddsAPIResponse struct {
+	SportKey      string    `json:"sport_key"`
+	SportTitle    string    `json:"sport_title"`
+	LastUpdate    time.Time `json:"last_update"`
+	Bookmakers    []struct {
+		Key     string `json:"key"`
+		Title   string `json:"title"`
+		LastOff float64 `json:"last_off"`
+		Markets []struct {
+			Key     string `json:"key"`
+			Outcomes []struct {
+				Name  string  `json:"name"`
+				Price float64 `json:"price"`
+			} `json:"outcomes"`
+		} `json:"markets"`
+	} `json:"bookmakers"`
+}
+
+// SharpOddsEntry represents a single odds entry from SharpAPI
+type SharpOddsEntry struct {
+	EventID      string  `json:"event_id"`
+	Sportsbook   string  `json:"sportsbook"`
+	HomeTeam     string  `json:"home_team"`
+	AwayTeam     string  `json:"away_team"`
+	MarketType   string  `json:"market_type"`
+	Selection    string  `json:"selection"`
+	TeamSide     string  `json:"team_side"`
+	OddsAmerican int     `json:"odds_american"`
+	Line         *float64 `json:"line"`
+	IsMainLine   bool    `json:"is_main_line"`
+}
+
+// SharpAPIResponse represents response from SharpAPI
+type SharpAPIResponse struct {
+	Data       []SharpOddsEntry `json:"data"`
+	UpdatedAt  string           `json:"updated_at"`
+}
+
+// fetchBettingOdds retrieves betting odds from SharpAPI
+func fetchBettingOdds(gamePk int, awayName, homeName, awayAbb, homeAbb, format string) string {
+	apiKey := os.Getenv("SHARPAPI_API_KEY")
+	if apiKey == "" {
+		return ""
+	}
+
+	url := "https://api.sharpapi.io/api/v1/odds?sport=baseball&is_main_line=true"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("X-API-Key", apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var oddsData SharpAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&oddsData); err != nil {
+		return ""
+	}
+
+	if len(oddsData.Data) == 0 {
+		return ""
+	}
+
+	// Group odds by event and find matching game
+	type MoneylineEntry struct {
+		Odds     int
+		TeamSide string
+	}
+
+	type GameOdds struct {
+		HomeTeam  string
+		AwayTeam  string
+		Moneyline map[string]map[string]MoneylineEntry // sportsbook -> team -> {odds, team_side}
+		Spread    map[string]map[string]struct{ Line float64; Odds int; TeamSide string } // sportsbook -> team -> {line, odds, team_side}
+		Total     map[string]map[string]struct{ Line float64; Odds int } // sportsbook -> over/under -> {line, odds}
+	}
+
+	games := make(map[string]*GameOdds)
+
+	for _, entry := range oddsData.Data {
+		if !entry.IsMainLine {
+			continue
+		}
+
+		// Create game key from team names
+		gameKey := fmt.Sprintf("%s_vs_%s", entry.HomeTeam, entry.AwayTeam)
+
+		if _, exists := games[gameKey]; !exists {
+			games[gameKey] = &GameOdds{
+				HomeTeam:  entry.HomeTeam,
+				AwayTeam:  entry.AwayTeam,
+				Moneyline: make(map[string]map[string]MoneylineEntry),
+				Spread:    make(map[string]map[string]struct{ Line float64; Odds int; TeamSide string }),
+				Total:     make(map[string]map[string]struct{ Line float64; Odds int }),
+			}
+		}
+
+		game := games[gameKey]
+		bookmaker := entry.Sportsbook
+
+		switch entry.MarketType {
+		case "moneyline":
+			if _, exists := game.Moneyline[bookmaker]; !exists {
+				game.Moneyline[bookmaker] = make(map[string]MoneylineEntry)
+			}
+			game.Moneyline[bookmaker][entry.Selection] = MoneylineEntry{Odds: entry.OddsAmerican, TeamSide: entry.TeamSide}
+
+		case "spread":
+			if _, exists := game.Spread[bookmaker]; !exists {
+				game.Spread[bookmaker] = make(map[string]struct{ Line float64; Odds int; TeamSide string })
+			}
+			lineVal := 0.0
+			if entry.Line != nil {
+				lineVal = *entry.Line
+			}
+			game.Spread[bookmaker][entry.Selection] = struct{ Line float64; Odds int; TeamSide string }{Line: lineVal, Odds: entry.OddsAmerican, TeamSide: entry.TeamSide}
+
+		case "totals":
+			if _, exists := game.Total[bookmaker]; !exists {
+				game.Total[bookmaker] = make(map[string]struct{ Line float64; Odds int })
+			}
+			lineVal := 0.0
+			if entry.Line != nil {
+				lineVal = *entry.Line
+			}
+			game.Total[bookmaker][entry.Selection] = struct{ Line float64; Odds int }{Line: lineVal, Odds: entry.OddsAmerican}
+		}
+	}
+
+	// Find matching game by comparing team names (case-insensitive)
+	var matchedGame *GameOdds
+	for _, game := range games {
+		// Check if both MLB team names appear in the SharpAPI game
+		gameTeamsLower := strings.ToLower(game.HomeTeam + " " + game.AwayTeam)
+		awayNameLower := strings.ToLower(awayName)
+		homeNameLower := strings.ToLower(homeName)
+		
+		if strings.Contains(gameTeamsLower, awayNameLower) && strings.Contains(gameTeamsLower, homeNameLower) {
+			matchedGame = game
+			break
+		}
+	}
+
+	if matchedGame == nil {
+		return ""
+	}
+
+	// Build odds display
+	var sb strings.Builder
+	sb.WriteString(style("\n================================================================================\n", ansiCyan, format))
+	sb.WriteString(style("                        BETTING ODDS\n", ansiBold+ansiCyan, format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+
+	// Moneyline section
+	sb.WriteString(txt("\n  MONEYLINE:\n", format))
+	if len(matchedGame.Moneyline) > 0 {
+		for bookmaker, teams := range matchedGame.Moneyline {
+			awayOdds := "--"
+			homeOdds := "--"
+			for _, entry := range teams {
+				if entry.TeamSide == "away" {
+					awayOdds = formatOddPrice(float64(entry.Odds))
+				}
+				if entry.TeamSide == "home" {
+					homeOdds = formatOddPrice(float64(entry.Odds))
+				}
+			}
+			sb.WriteString(txt(fmt.Sprintf("    %s: %s %s | %s %s\n", bookmaker, awayAbb, awayOdds, homeAbb, homeOdds), format))
+		}
+	} else {
+		sb.WriteString(txt("    No odds available\n", format))
+	}
+
+	// Spread section
+	sb.WriteString(txt("\n  SPREAD:\n", format))
+	if len(matchedGame.Spread) > 0 {
+		for bookmaker, teams := range matchedGame.Spread {
+			var awaySpread, homeSpread string
+			for _, data := range teams {
+				if data.TeamSide == "away" {
+					awaySpread = fmt.Sprintf("%.1f (%s)", data.Line, formatOddPrice(float64(data.Odds)))
+				}
+				if data.TeamSide == "home" {
+					homeSpread = fmt.Sprintf("%.1f (%s)", data.Line, formatOddPrice(float64(data.Odds)))
+				}
+			}
+			if awaySpread != "" && homeSpread != "" {
+				sb.WriteString(txt(fmt.Sprintf("    %s: %s %s | %s %s\n", bookmaker, awayAbb, awaySpread, homeAbb, homeSpread), format))
+			}
+		}
+	} else {
+		sb.WriteString(txt("    No odds available\n", format))
+	}
+
+	// Total (Over/Under) section
+	sb.WriteString(txt("\n  TOTAL (OVER/UNDER):\n", format))
+	if len(matchedGame.Total) > 0 {
+		for bookmaker, outcomes := range matchedGame.Total {
+			var overStr, underStr string
+			for selection, data := range outcomes {
+				if strings.EqualFold(selection, "Over") {
+					overStr = fmt.Sprintf("O %.1f %s", data.Line, formatOddPrice(float64(data.Odds)))
+				}
+				if strings.EqualFold(selection, "Under") {
+					underStr = fmt.Sprintf("U %.1f %s", data.Line, formatOddPrice(float64(data.Odds)))
+				}
+			}
+			if overStr != "" && underStr != "" {
+				sb.WriteString(txt(fmt.Sprintf("    %s: %s | %s\n", bookmaker, overStr, underStr), format))
+			}
+		}
+	} else {
+		sb.WriteString(txt("    No odds available\n", format))
+	}
+
+	sb.WriteString(txt("\n  Data updated: " + oddsData.UpdatedAt + "\n", format))
+	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+
+	return sb.String()
+}
+
+// formatOddPrice formats American odds (e.g., -150, +130)
+func formatOddPrice(price float64) string {
+	if price < 0 {
+		return fmt.Sprintf("%+.0f", price)
+	}
+	return fmt.Sprintf("+%0.0f", price)
 }

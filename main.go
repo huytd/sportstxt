@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/joho/godotenv"
 	"huy.rocks/sports/sports"
 )
 
 func main() {
+	_ = godotenv.Load()
+
 	port := "9090"
 	if p := os.Getenv("PORT"); p != "" {
 		port = p
