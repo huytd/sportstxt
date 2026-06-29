@@ -619,6 +619,25 @@ const htmlPage = `<!DOCTYPE html>
         updateStatus();
         setInterval(updateStatus, 1000);
 
+        let pollInterval = null;
+
+        function updatePolling() {
+            const path = window.location.pathname;
+            const isTeamPage = path.startsWith('/mlb/team/');
+            const isComparePage = path.startsWith('/mlb/compare');
+
+            if (isTeamPage || isComparePage) {
+                if (pollInterval) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                }
+            } else {
+                if (!pollInterval) {
+                    pollInterval = setInterval(fetchTerminalData, 10000);
+                }
+            }
+        }
+
         // Fetch live terminal data
         async function fetchTerminalData() {
             try {
@@ -635,15 +654,18 @@ const htmlPage = `<!DOCTYPE html>
                 document.getElementById('terminal-content').innerHTML = htmlText;
             } catch (err) {
                 console.error(err);
+                const path = window.location.pathname;
+                const isTeamPage = path.startsWith('/mlb/team/');
+                const isComparePage = path.startsWith('/mlb/compare');
+                const retryMsg = (isTeamPage || isComparePage) ? '' : '\nRetrying in 10s...';
                 document.getElementById('terminal-content').innerHTML = 
-                    '<span class="term-red">ERROR CONNECTING TO STREAM: ' + err.message + '</span>\nRetrying in 10s...';
+                    '<span class="term-red">ERROR CONNECTING TO STREAM: ' + err.message + '</span>' + retryMsg;
             }
         }
 
         // Initial fetch
         fetchTerminalData();
-        // Poll every 10 seconds (only on scoreboard/game pages)
-        setInterval(fetchTerminalData, 10000);
+        updatePolling();
 
         // Handle navigation inside terminal via AJAX
         document.addEventListener('click', async (e) => {
@@ -652,6 +674,7 @@ const htmlPage = `<!DOCTYPE html>
                 const href = e.target.getAttribute('href');
                 history.pushState(null, '', href);
                 updateStatus(); // Immediate layout update
+                updatePolling();
                 document.getElementById('terminal-content').innerHTML = 'RETRIEVING FEED...';
                 await fetchTerminalData();
             }
@@ -660,6 +683,7 @@ const htmlPage = `<!DOCTYPE html>
         // Listen for back button
         window.addEventListener('popstate', () => {
             updateStatus();
+            updatePolling();
             fetchTerminalData();
         });
     </script>
