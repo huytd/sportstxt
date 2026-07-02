@@ -983,6 +983,24 @@ func renderGame(game GameFeedResponse, gamePk int, format string) string {
 				hasLastSeen = true
 			}
 
+			// Detect runs: compare current play's score with previous play chronologically
+			hasRun := false
+			if i > 0 {
+				prevPlay := plays[i-1]
+				if play.Result.AwayScore != prevPlay.Result.AwayScore || play.Result.HomeScore != prevPlay.Result.HomeScore {
+					hasRun = true
+				}
+			}
+
+			// Detect outs: check description for out-related keywords
+			isOut := false
+			lowerDesc := strings.ToLower(desc)
+			if strings.Contains(lowerDesc, "out") ||
+				strings.Contains(lowerDesc, "strike out") ||
+				strings.Contains(lowerDesc, "grounded into") {
+				isOut = true
+			}
+
 			// Get the pitch sequence for this play
 			var codes []string
 			for _, e := range play.PlayEvents {
@@ -1013,6 +1031,10 @@ func renderGame(game GameFeedResponse, gamePk int, format string) string {
 			var playLine string
 			if isLast {
 				playLine = style(prefix+desc, ansiGreen, format) + seqStyled + style(" (Current Play)\n", ansiGreen, format)
+			} else if hasRun {
+				playLine = style(prefix+desc, ansiBold, format) + seqStyled + txt("\n", format)
+			} else if isOut {
+				playLine = style(prefix+desc, ansiRed, format) + seqStyled + txt("\n", format)
 			} else {
 				playLine = txt(prefix+desc, format) + seqStyled + txt("\n", format)
 			}
