@@ -1029,12 +1029,14 @@ func renderGame(game GameFeedResponse, gamePk int, format string) string {
 			prefix := fmt.Sprintf(" [%s] ", halfCode)
 
 			var playLine string
-			if isLast {
+			if isOut && isLast {
+				playLine = style(prefix+desc, ansiRed, format) + seqStyled + style(" (Current Play)\n", ansiRed, format)
+			} else if isOut {
+				playLine = style(prefix+desc, ansiRed, format) + seqStyled + txt("\n", format)
+			} else if isLast {
 				playLine = style(prefix+desc, ansiGreen, format) + seqStyled + style(" (Current Play)\n", ansiGreen, format)
 			} else if hasRun {
 				playLine = style(prefix+desc, ansiBold, format) + seqStyled + txt("\n", format)
-			} else if isOut {
-				playLine = style(prefix+desc, ansiRed, format) + seqStyled + txt("\n", format)
 			} else {
 				playLine = txt(prefix+desc, format) + seqStyled + txt("\n", format)
 			}
