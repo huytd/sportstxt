@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1211,6 +1212,7 @@ type DivisionTeam struct {
 	League       string `json:"league"` // "AL" or "NL"
 	DivisionRank string `json:"divisionRank"`
 	WildCard     bool   `json:"wildCard"`
+	DivisionId   int    `json:"-"`
 }
 
 // TeamInfo represents basic team info from the teams API
@@ -1281,15 +1283,8 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	sb.WriteString(style("================================================================================\n", ansiCyan, format))
 
-	// Group standings by division + wild card
-	alEast := []DivisionTeam{}
-	alCentral := []DivisionTeam{}
-	alWest := []DivisionTeam{}
-	nlEast := []DivisionTeam{}
-	nlCentral := []DivisionTeam{}
-	nlWest := []DivisionTeam{}
-	alWildCard := []DivisionTeam{}
-	nlWildCard := []DivisionTeam{}
+	// Collect all teams for unified ranking
+	var allTeams []DivisionTeam
 
 	for _, rec := range standings.Records {
 		leagueName := "AL"
@@ -1314,30 +1309,80 @@ func renderStandings(standings LeagueStandingsResponse, teamMap map[int]TeamInfo
 				League:       leagueName,
 				DivisionRank: tr.DivisionRank,
 				WildCard:     tr.DivWildcardSeed > 0,
+				DivisionId:   rec.Division.Id,
 			}
-			// Wild card teams (not division leaders with a wildcard seed)
-			if t.WildCard && t.DivisionRank != "1" {
-				if leagueName == "AL" {
-					alWildCard = append(alWildCard, t)
-				} else {
-					nlWildCard = append(nlWildCard, t)
-				}
-				continue
+			allTeams = append(allTeams, t)
+		}
+	}
+
+	// Sort all teams by winning percentage (string comparison works for MLB PCT format like ".567")
+	sort.SliceStable(allTeams, func(i, j int) bool {
+		return allTeams[i].PCT > allTeams[j].PCT
+	})
+
+	// Render unified all-teams table
+	sb.WriteString(style("\n ALL TEAMS RANKINGS", ansiBold+ansiCyan, format))
+	sb.WriteString("\n")
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style(fmt.Sprintf("   %4s %-20s %4s %4s  %6s  %4s  %s\n", "RANK", "TEAM", "W", "L", "PCT", "GB", "LEAGUE"), ansiBold, format))
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	for i, t := range allTeams {
+		teamName := t.Name
+		if len(teamName) > 20 {
+			teamName = teamName[:19] + "."
+		}
+		displayAbbr := fmt.Sprintf("__TL_%d__", t.Id)
+		gb := t.GB
+		if gb == "-" {
+			gb = "-"
+		}
+
+		abbrLen := len(t.Abbreviation)
+		paddingSpaces := ""
+		if abbrLen < 4 {
+			paddingSpaces = strings.Repeat(" ", 4-abbrLen)
+		}
+
+		row := fmt.Sprintf("  %2d %s%s %-20s %4d %4d  %6s  %4s  %s\n",
+			i+1, displayAbbr, paddingSpaces, teamName, t.Wins, t.Losses, t.PCT, gb, t.League,
+		)
+		sb.WriteString(txt(row, format))
+	}
+	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+
+	// Group standings by division + wild card
+	alEast := []DivisionTeam{}
+	alCentral := []DivisionTeam{}
+	alWest := []DivisionTeam{}
+	nlEast := []DivisionTeam{}
+	nlCentral := []DivisionTeam{}
+	nlWest := []DivisionTeam{}
+	alWildCard := []DivisionTeam{}
+	nlWildCard := []DivisionTeam{}
+
+	for _, t := range allTeams {
+		if t.WildCard && t.DivisionRank != "1" {
+			if t.League == "AL" {
+				alWildCard = append(alWildCard, t)
+			} else {
+				nlWildCard = append(nlWildCard, t)
 			}
-			switch rec.Division.Id {
-			case 200: // AL West
-				alWest = append(alWest, t)
-			case 201: // AL East
-				alEast = append(alEast, t)
-			case 202: // AL Central
-				alCentral = append(alCentral, t)
-			case 203: // NL West
-				nlWest = append(nlWest, t)
-			case 204: // NL East
-				nlEast = append(nlEast, t)
-			case 205: // NL Central
-				nlCentral = append(nlCentral, t)
-			}
+			continue
+		}
+		switch t.DivisionId {
+		case 200: // AL West
+			alWest = append(alWest, t)
+		case 201: // AL East
+			alEast = append(alEast, t)
+		case 202: // AL Central
+			alCentral = append(alCentral, t)
+		case 203: // NL West
+			nlWest = append(nlWest, t)
+		case 204: // NL East
+			nlEast = append(nlEast, t)
+		case 205: // NL Central
+			nlCentral = append(nlCentral, t)
 		}
 	}
 
