@@ -729,8 +729,56 @@ func renderCurrentPitches(game GameFeedResponse, format string) string {
 			if desc == "" {
 				desc = strings.ToLower(e.Details.Call.Description)
 			}
+			if desc == "" {
+				desc = "unknown result"
+			}
 
-			line := fmt.Sprintf("  P%d: %d-%d, %s%s, %s", pitchNum, balls, strikes, speedStr, pitchType, desc)
+			// Select color code matching colorizePitchSequence logic
+			code := e.Details.Call.Code
+			if code == "" {
+				code = e.Details.Type.Code
+			}
+
+			var ansiColor string
+			switch code {
+			case "B":
+				ansiColor = ansiGreen
+			case "C":
+				ansiColor = ansiRed
+			case "S":
+				ansiColor = ansiMagenta
+			case "F":
+				ansiColor = ansiYellow
+			case "X":
+				ansiColor = ansiBlue
+			case "D":
+				ansiColor = ansiCyan
+			case "E":
+				ansiColor = ansiBold + ansiCyan
+			case "*":
+				ansiColor = ansiGray
+			case "W":
+				ansiColor = ansiBold + ansiRed
+			case "H":
+				ansiColor = ansiBold + ansiYellow
+			case "I":
+				ansiColor = ansiBold + ansiGreen
+			case "L":
+				ansiColor = ansiBold + ansiMagenta
+			default:
+				ansiColor = ansiReset
+			}
+
+			// Format prefix and calculate padding to align outcome column at index 38
+			prefix := fmt.Sprintf("  P%d: %d-%d, %s%s", pitchNum, balls, strikes, speedStr, pitchType)
+			runeCount := utf8.RuneCountInString(prefix)
+			padSize := 38 - runeCount
+			if padSize < 2 {
+				padSize = 2
+			}
+			padding := strings.Repeat(" ", padSize)
+
+			line := fmt.Sprintf("%s%s%s", prefix, padding, style(desc, ansiColor, format))
 			pitches = append(pitches, line)
 			pitchNum++
 		}
@@ -746,7 +794,7 @@ func renderCurrentPitches(game GameFeedResponse, format string) string {
 	var sb strings.Builder
 	sb.WriteString(style(" PITCHES:\n\n", ansiBold+ansiCyan, format))
 	for _, p := range pitches {
-		sb.WriteString(txt(p+"\n", format))
+		sb.WriteString(p + "\n")
 	}
 	return sb.String()
 }
