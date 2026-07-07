@@ -13,7 +13,8 @@ import (
 
 // ANSI terminal style escape codes
 const (
-	ansiReset  = "\033[0m"
+	layoutWidth = 78
+	ansiReset   = "\033[0m"
 	ansiBold   = "\033[1m"
 	ansiGreen  = "\033[32m"
 	ansiYellow = "\033[33m"
@@ -418,7 +419,7 @@ const htmlPage = `<!DOCTYPE html>
 
         .term-container {
             width: 100%;
-            max-width: 900px;
+            max-width: 820px;
             background: var(--term-container-bg);
             border: 1px solid var(--term-border);
             border-radius: 8px;
@@ -483,6 +484,11 @@ const htmlPage = `<!DOCTYPE html>
         }
         .term-link:hover {
             color: var(--term-link-hover) !important;
+        }
+        .term-box-link {
+            text-decoration: none;
+            color: inherit;
+            cursor: pointer;
         }
 
         /* Status bar */

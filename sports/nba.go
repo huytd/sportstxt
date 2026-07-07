@@ -165,7 +165,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 
 	zoneName, _ := time.Now().In(loc).Zone()
 	title := fmt.Sprintf("NBA LIVE SCOREBOARD (%s %s)", dateStr, zoneName)
-	padding := (80 - len(title)) / 2
+	padding := (layoutWidth - len(title)) / 2
 	if padding < 0 {
 		padding = 0
 	}
@@ -179,19 +179,19 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 
 	// Sports Selector row
 	if format != "html" {
-		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + "\n")
-		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
 	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 	
 	// Date Navigation Row
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 	sb.WriteString(txt(" ", format))
 	prevLinkText := fmt.Sprintf("<< PREV DAY (%s)", prevDateStr)
 	nextLinkText := fmt.Sprintf("NEXT DAY (%s) >>", nextDateStr)
-	spacerSize := 79 - len(prevLinkText) - len(nextLinkText)
+	spacerSize := layoutWidth - 1 - len(prevLinkText) - len(nextLinkText)
 	if spacerSize < 1 {
 		spacerSize = 1
 	}
@@ -202,16 +202,16 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	} else {
 		sb.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
 	}
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 
 	if len(sched.Events) == 0 {
 		sb.WriteString(txt(" No games scheduled for this date.\n", format))
-		sb.WriteString(style("================================================================================\n", ansiCyan, format))
+		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 		return sb.String()
 	}
 
-	sb.WriteString(style(fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-11s\n", "ID", "TIME", "AWAY TEAM", "PTS", "PTS", "HOME TEAM", "STATUS"), ansiBold, format))
-	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style(fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-10s\n", "ID", "TIME", "AWAY TEAM", "PTS", "PTS", "HOME TEAM", "STATUS"), ansiBold, format))
+	sb.WriteString(style("------------------------------------------------------------------------------\n", ansiCyan, format))
 
 	for _, event := range sched.Events {
 		idStr := event.ID
@@ -261,8 +261,8 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		}
 
 		statusStr := event.Status.Type.Detail
-		if len(statusStr) > 11 {
-			statusStr = statusStr[:10] + "."
+		if len(statusStr) > 10 {
+			statusStr = statusStr[:9] + "."
 		}
 
 		var rowStyle string
@@ -281,7 +281,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			gameTime = t.In(loc).Format("03:04 PM")
 		}
 
-		row := fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-11s\n",
+		row := fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-10s\n",
 			idStr,
 			gameTime,
 			awayName,
@@ -293,13 +293,13 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		sb.WriteString(style(row, rowStyle, format))
 	}
 
-	sb.WriteString(style("--------------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(style("------------------------------------------------------------------------------\n", ansiCyan, format))
 	if format == "ansi" {
 		sb.WriteString(txt(" Run 'curl http://localhost:9090/nba/game/<ID>' to view a game in real-time.\n", format))
 	} else {
 		sb.WriteString(txt(" Click on a game ID to view the game in real-time.\n", format))
 	}
-	sb.WriteString(style("================================================================================\n", ansiCyan, format))
+	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 
 	if format == "html" {
 		res := sb.String()
