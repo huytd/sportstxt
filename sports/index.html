@@ -130,6 +130,16 @@
             text-decoration: none;
             color: inherit;
             cursor: pointer;
+            display: block;
+        }
+
+        /* 2-column grid for game boxes */
+        .games-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 16px;
+            margin-top: 10px;
+            margin-bottom: 10px;
         }
 
         /* Status bar */

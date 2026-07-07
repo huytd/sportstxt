@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -210,6 +211,24 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		return sb.String()
 	}
 
+	sort.SliceStable(sched.Events, func(i, j int) bool {
+		parseTime := func(s string) time.Time {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t
+			}
+			if t, err := time.Parse("2006-01-02T15:04Z", s); err == nil {
+				return t
+			}
+			return time.Time{}
+		}
+		t1 := parseTime(sched.Events[i].Date)
+		t2 := parseTime(sched.Events[j].Date)
+		if !t1.IsZero() && !t2.IsZero() {
+			return t1.Before(t2)
+		}
+		return sched.Events[i].Date < sched.Events[j].Date
+	})
+
 	sb.WriteString(style(fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-10s\n", "ID", "TIME", "AWAY TEAM", "PTS", "PTS", "HOME TEAM", "STATUS"), ansiBold, format))
 	sb.WriteString(style("------------------------------------------------------------------------------\n", ansiCyan, format))
 
@@ -265,13 +284,35 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			statusStr = statusStr[:9] + "."
 		}
 
-		var rowStyle string
+		var awayStyle, homeStyle string
+		var baseStyle string
+
 		if isLive {
-			rowStyle = ansiGreen
+			baseStyle = ansiGreen
+			awayStyle = ansiGreen
+			homeStyle = ansiGreen
+			awayScoreVal, _ := strconv.Atoi(awayComp.Score)
+			homeScoreVal, _ := strconv.Atoi(homeComp.Score)
+			if awayScoreVal > homeScoreVal {
+				awayStyle = ansiBold + ansiGreen
+			} else if homeScoreVal > awayScoreVal {
+				homeStyle = ansiBold + ansiGreen
+			}
 		} else if isFinal {
-			rowStyle = ansiBold
+			baseStyle = ""
+			awayStyle = ""
+			homeStyle = ""
+			awayScoreVal, _ := strconv.Atoi(awayComp.Score)
+			homeScoreVal, _ := strconv.Atoi(homeComp.Score)
+			if awayScoreVal > homeScoreVal {
+				awayStyle = ansiBold
+			} else if homeScoreVal > awayScoreVal {
+				homeStyle = ansiBold
+			}
 		} else {
-			rowStyle = ansiGray
+			baseStyle = ansiGray
+			awayStyle = ansiGray
+			homeStyle = ansiGray
 		}
 
 		gameTime := "--:--"
@@ -281,16 +322,24 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			gameTime = t.In(loc).Format("03:04 PM")
 		}
 
-		row := fmt.Sprintf(" %-9s %-8s %-17s %3s  @  %3s %-17s %-10s\n",
-			idStr,
-			gameTime,
-			awayName,
-			awayScoreStr,
-			homeScoreStr,
-			homeName,
-			statusStr,
+		idPart := style(fmt.Sprintf("%-9s", idStr), baseStyle, format)
+		timePart := style(fmt.Sprintf("%-8s", gameTime), baseStyle, format)
+		awayNamePart := style(fmt.Sprintf("%-17s", awayName), awayStyle, format)
+		awayScorePart := style(fmt.Sprintf("%3s", awayScoreStr), awayStyle, format)
+		homeScorePart := style(fmt.Sprintf("%3s", homeScoreStr), homeStyle, format)
+		homeNamePart := style(fmt.Sprintf("%-17s", homeName), homeStyle, format)
+		statusPart := style(fmt.Sprintf("%-10s", statusStr), baseStyle, format)
+
+		row := fmt.Sprintf(" %s %s %s %s  @  %s %s %s\n",
+			idPart,
+			timePart,
+			awayNamePart,
+			awayScorePart,
+			homeScorePart,
+			homeNamePart,
+			statusPart,
 		)
-		sb.WriteString(style(row, rowStyle, format))
+		sb.WriteString(row)
 	}
 
 	sb.WriteString(style("------------------------------------------------------------------------------\n", ansiCyan, format))

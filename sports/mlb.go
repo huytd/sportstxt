@@ -13,42 +13,45 @@ import (
 	"unicode/utf8"
 )
 
+// ScheduleGame represents a single game in the schedule response
+type ScheduleGame struct {
+	GamePk int `json:"gamePk"`
+	Status struct {
+		DetailedState string `json:"detailedState"`
+	} `json:"status"`
+	Teams struct {
+		Away struct {
+			Team struct {
+				Id   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"team"`
+			Score int `json:"score"`
+		} `json:"away"`
+		Home struct {
+			Team struct {
+				Id   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"team"`
+			Score int `json:"score"`
+		} `json:"home"`
+	} `json:"teams"`
+	GameDate string `json:"gameDate"`
+	Linescore *struct {
+		CurrentInning        int    `json:"currentInning"`
+		CurrentInningOrdinal string `json:"currentInningOrdinal"`
+		InningState          string `json:"inningState"`
+		IsTopInning          bool   `json:"isTopInning"`
+		Balls                int    `json:"balls"`
+		Strikes              int    `json:"strikes"`
+		Outs                 int    `json:"outs"`
+	} `json:"linescore"`
+}
+
 // ScheduleResponse represents the response from statsapi.mlb.com schedule endpoint
 type ScheduleResponse struct {
 	Dates []struct {
-		Date  string `json:"date"`
-		Games []struct {
-			GamePk int `json:"gamePk"`
-			Status struct {
-				DetailedState string `json:"detailedState"`
-			} `json:"status"`
-			Teams struct {
-				Away struct {
-					Team struct {
-						Id   int    `json:"id"`
-						Name string `json:"name"`
-					} `json:"team"`
-					Score int `json:"score"`
-				} `json:"away"`
-				Home struct {
-					Team struct {
-						Id   int    `json:"id"`
-						Name string `json:"name"`
-					} `json:"team"`
-					Score int `json:"score"`
-				} `json:"home"`
-			} `json:"teams"`
-			GameDate string `json:"gameDate"`
-			Linescore *struct {
-				CurrentInning        int    `json:"currentInning"`
-				CurrentInningOrdinal string `json:"currentInningOrdinal"`
-				InningState          string `json:"inningState"`
-				IsTopInning          bool   `json:"isTopInning"`
-				Balls                int    `json:"balls"`
-				Strikes              int    `json:"strikes"`
-				Outs                 int    `json:"outs"`
-			} `json:"linescore"`
-		} `json:"games"`
+		Date  string         `json:"date"`
+		Games []ScheduleGame `json:"games"`
 	} `json:"dates"`
 }
 
@@ -261,6 +264,164 @@ type GameFeedResponse struct {
 	} `json:"liveData"`
 }
 
+// renderSingleGameBox renders a single game box as a slice of 5 styled text lines
+func renderSingleGameBox(game ScheduleGame, loc *time.Location, format string, width int) []string {
+	var lines []string
+
+	awayName := game.Teams.Away.Team.Name
+	homeName := game.Teams.Home.Team.Name
+
+	awayScoreStr := "-"
+	homeScoreStr := "-"
+
+	state := game.Status.DetailedState
+	isLive := state == "In Progress" || state == "Live" || state == "In Progress - Warmup" || state == "Warmup"
+	isFinal := state == "Final" || state == "Game Over"
+
+	if isLive || isFinal {
+		awayScoreStr = strconv.Itoa(game.Teams.Away.Score)
+		homeScoreStr = strconv.Itoa(game.Teams.Home.Score)
+	}
+
+	gameTime := "--:--"
+	if t, err := time.Parse(time.RFC3339, game.GameDate); err == nil {
+		gameTime = t.In(loc).Format("03:04 PM")
+	}
+
+	var header string
+	var headerStyle string
+	var awayStyle, homeStyle string
+	var awayScoreStyle, homeScoreStyle string
+
+	if isLive {
+		headerStyle = ansiGreen
+		if game.Linescore != nil {
+			half := "BOT"
+			if game.Linescore.IsTopInning {
+				half = "TOP"
+			}
+			header = fmt.Sprintf("%s %s", half, game.Linescore.CurrentInningOrdinal)
+		} else {
+			header = "LIVE"
+		}
+
+		awayStyle = ansiGreen
+		homeStyle = ansiGreen
+		awayScoreStyle = ansiGreen
+		homeScoreStyle = ansiGreen
+
+		if game.Teams.Away.Score > game.Teams.Home.Score {
+			awayStyle = ansiBold + ansiGreen
+			awayScoreStyle = ansiBold + ansiGreen
+		} else if game.Teams.Home.Score > game.Teams.Away.Score {
+			homeStyle = ansiBold + ansiGreen
+			homeScoreStyle = ansiBold + ansiGreen
+		}
+	} else if isFinal {
+		header = "FINAL"
+		headerStyle = ansiBold
+
+		awayStyle = ""
+		homeStyle = ""
+		awayScoreStyle = ""
+		homeScoreStyle = ""
+
+		if game.Teams.Away.Score > game.Teams.Home.Score {
+			awayStyle = ansiBold
+			awayScoreStyle = ansiBold
+		} else if game.Teams.Home.Score > game.Teams.Away.Score {
+			homeStyle = ansiBold
+			homeScoreStyle = ansiBold
+		}
+	} else {
+		header = gameTime
+		headerStyle = ansiGray
+		awayStyle = ansiGray
+		homeStyle = ansiGray
+		awayScoreStyle = ansiGray
+		homeScoreStyle = ansiGray
+	}
+
+	// Compute right-side content
+	var awayRight, homeRight string
+	awayRightVisible, homeRightVisible := 0, 0
+	if isLive && game.Linescore != nil {
+		ballsDots := dots(game.Linescore.Balls, 3)
+		strikesDots := dots(game.Linescore.Strikes, 2)
+		dotsStr := ballsDots + " " + strikesDots
+		awayRight = style(ballsDots, ansiGreen, format) + " " + style(strikesDots, ansiRed, format) + " - " + style(awayScoreStr, awayScoreStyle, format)
+		awayRightVisible = utf8.RuneCountInString(dotsStr) + 3 + len(awayScoreStr)
+
+		outsStr := fmt.Sprintf("%d OUT", game.Linescore.Outs)
+		homeRight = style(outsStr, ansiBold, format) + " - " + style(homeScoreStr, homeScoreStyle, format)
+		homeRightVisible = len(outsStr) + 3 + len(homeScoreStr)
+	} else {
+		awayRight = style(awayScoreStr, awayScoreStyle, format)
+		awayRightVisible = len(awayScoreStr)
+		homeRight = style(homeScoreStr, homeScoreStyle, format)
+		homeRightVisible = len(homeScoreStr)
+	}
+
+	innerWidth := width - 2
+
+	// Truncate team names if they are too long to fit
+	truncLimitAway := innerWidth - 4 - awayRightVisible
+	if truncLimitAway < 12 {
+		truncLimitAway = 12
+	}
+	truncLimitHome := innerWidth - 4 - homeRightVisible
+	if truncLimitHome < 12 {
+		truncLimitHome = 12
+	}
+
+	trunc := func(name string, maxLen int) string {
+		if utf8.RuneCountInString(name) > maxLen {
+			runes := []rune(name)
+			return string(runes[:maxLen-2]) + ".."
+		}
+		return name
+	}
+
+	awayName = trunc(awayName, truncLimitAway)
+	homeName = trunc(homeName, truncLimitHome)
+
+	// Top border
+	border := "+" + strings.Repeat("-", innerWidth) + "+"
+	lines = append(lines, style(border, ansiCyan, format))
+
+	// Header line (centered)
+	headerPad := innerWidth - len(header)
+	headerLeft := headerPad / 2
+	headerRight := headerPad - headerLeft
+	headerLine := fmt.Sprintf("|%s%s%s|", strings.Repeat(" ", headerLeft), header, strings.Repeat(" ", headerRight))
+	lines = append(lines, style(headerLine, headerStyle, format))
+
+	// Away team line
+	{
+		gap := innerWidth - 3 - utf8.RuneCountInString(awayName) - awayRightVisible
+		if gap < 1 {
+			gap = 1
+		}
+		awayLine := fmt.Sprintf("| %s%s %s |", style(html.EscapeString(awayName), awayStyle, format), strings.Repeat(" ", gap), awayRight)
+		lines = append(lines, awayLine)
+	}
+
+	// Home team line
+	{
+		gap := innerWidth - 3 - utf8.RuneCountInString(homeName) - homeRightVisible
+		if gap < 1 {
+			gap = 1
+		}
+		homeLine := fmt.Sprintf("| %s%s %s |", style(html.EscapeString(homeName), homeStyle, format), strings.Repeat(" ", gap), homeRight)
+		lines = append(lines, homeLine)
+	}
+
+	// Bottom border
+	lines = append(lines, style(border, ansiCyan, format))
+
+	return lines
+}
+
 // renderSchedule creates the plain-text scoreboard view
 func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *time.Location) string {
 	var sb strings.Builder
@@ -311,125 +472,56 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 		return sb.String()
 	}
 
-	const innerWidth = layoutWidth - 2
-
-	for _, game := range sched.Dates[0].Games {
-		awayName := game.Teams.Away.Team.Name
-		homeName := game.Teams.Home.Team.Name
-
-		awayScoreStr := "-"
-		homeScoreStr := "-"
-
-		state := game.Status.DetailedState
-		isLive := state == "In Progress" || state == "Live" || state == "In Progress - Warmup" || state == "Warmup"
-		isFinal := state == "Final" || state == "Game Over"
-
-		if isLive || isFinal {
-			awayScoreStr = strconv.Itoa(game.Teams.Away.Score)
-			homeScoreStr = strconv.Itoa(game.Teams.Home.Score)
+	sort.SliceStable(sched.Dates[0].Games, func(i, j int) bool {
+		t1, err1 := time.Parse(time.RFC3339, sched.Dates[0].Games[i].GameDate)
+		t2, err2 := time.Parse(time.RFC3339, sched.Dates[0].Games[j].GameDate)
+		if err1 == nil && err2 == nil {
+			return t1.Before(t2)
 		}
+		return sched.Dates[0].Games[i].GameDate < sched.Dates[0].Games[j].GameDate
+	})
 
-		gameTime := "--:--"
-		if t, err := time.Parse(time.RFC3339, game.GameDate); err == nil {
-			gameTime = t.In(loc).Format("03:04 PM")
-		}
-
-		var header string
-		var headerStyle string
-		var lineStyle string
-
-		if isLive {
-			lineStyle = ansiGreen
-			headerStyle = ansiGreen
-			if game.Linescore != nil {
-				half := "BOT"
-				if game.Linescore.IsTopInning {
-					half = "TOP"
-				}
-				header = fmt.Sprintf("%s %s", half, game.Linescore.CurrentInningOrdinal)
-			} else {
-				header = "LIVE"
-			}
-		} else if isFinal {
-			header = "FINAL"
-			headerStyle = ansiBold
-			lineStyle = ansiBold
-		} else {
-			header = gameTime
-			headerStyle = ansiGray
-			lineStyle = ansiGray
-		}
-
-		// Compute right-side content
-		var awayRight, homeRight string
-		awayRightVisible, homeRightVisible := 0, 0
-		if isLive && game.Linescore != nil {
-			ballsDots := dots(game.Linescore.Balls, 3)
-			strikesDots := dots(game.Linescore.Strikes, 2)
-			dotsStr := ballsDots + " " + strikesDots
-			awayRight = style(ballsDots, ansiGreen, format) + " " + style(strikesDots, ansiRed, format) + " - " + style(awayScoreStr, lineStyle, format)
-			awayRightVisible = utf8.RuneCountInString(dotsStr) + 3 + len(awayScoreStr)
-
-			outsStr := fmt.Sprintf("%d OUT", game.Linescore.Outs)
-			homeRight = style(outsStr, ansiBold, format) + " - " + style(homeScoreStr, lineStyle, format)
-			homeRightVisible = len(outsStr) + 3 + len(homeScoreStr)
-		} else {
-			awayRight = style(awayScoreStr, lineStyle, format)
-			awayRightVisible = len(awayScoreStr)
-			homeRight = style(homeScoreStr, lineStyle, format)
-			homeRightVisible = len(homeScoreStr)
-		}
-
-		// Top border
-		border := "+" + strings.Repeat("-", innerWidth) + "+\n"
-
-		if format == "html" {
+	if format == "html" {
+		sb.WriteString(`<div class="games-grid">`)
+		for _, game := range sched.Dates[0].Games {
 			sb.WriteString(fmt.Sprintf(`<a href="/game/%d" class="term-box-link">`, game.GamePk))
-		}
-		sb.WriteString(style(border, ansiCyan, format))
-
-		// Header line (centered)
-		headerPad := innerWidth - len(header)
-		headerLeft := headerPad / 2
-		headerRight := headerPad - headerLeft
-		headerLine := fmt.Sprintf("|%s%s%s|\n", strings.Repeat(" ", headerLeft), header, strings.Repeat(" ", headerRight))
-		sb.WriteString(style(headerLine, headerStyle, format))
-
-		// Away team line
-		{
-			gap := innerWidth - 3 - len(awayName) - awayRightVisible
-			if gap < 1 {
-				gap = 1
+			boxLines := renderSingleGameBox(game, loc, format, 38)
+			for _, line := range boxLines {
+				sb.WriteString(line + "\n")
 			}
-			sb.WriteString(fmt.Sprintf("| %s%s %s |\n", style(html.EscapeString(awayName), lineStyle, format), strings.Repeat(" ", gap), awayRight))
-		}
-
-		// Home team line
-		{
-			gap := innerWidth - 3 - len(homeName) - homeRightVisible
-			if gap < 1 {
-				gap = 1
-			}
-			sb.WriteString(fmt.Sprintf("| %s%s %s |\n", style(html.EscapeString(homeName), lineStyle, format), strings.Repeat(" ", gap), homeRight))
-		}
-
-		// Bottom border
-		sb.WriteString(style(border, ansiCyan, format))
-
-		if format == "html" {
 			sb.WriteString("</a>\n")
-		} else {
-			sb.WriteString(txt("\n", format))
+		}
+		sb.WriteString(`</div>` + "\n")
+	} else {
+		games := sched.Dates[0].Games
+		for i := 0; i < len(games); i += 2 {
+			lines1 := renderSingleGameBox(games[i], loc, format, 38)
+			var lines2 []string
+			if i+1 < len(games) {
+				lines2 = renderSingleGameBox(games[i+1], loc, format, 38)
+			}
+
+			for j := 0; j < 5; j++ {
+				l1 := lines1[j]
+				l2 := ""
+				if j < len(lines2) {
+					l2 = lines2[j]
+				}
+
+				if l2 != "" {
+					sb.WriteString(l1 + "  " + l2 + "\n")
+				} else {
+					sb.WriteString(l1 + "\n")
+				}
+			}
+			sb.WriteString("\n")
 		}
 	}
 
-	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
+
 	if format == "ansi" {
 		sb.WriteString(txt(" Run 'curl http://localhost:9090/game/<ID>' to view a game in real-time.\n", format))
-	} else {
-		sb.WriteString(txt(" Click on a game to view in real-time.\n", format))
 	}
-	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 
 	return sb.String()
 }
