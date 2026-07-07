@@ -419,7 +419,7 @@ const htmlPage = `<!DOCTYPE html>
 
         .term-container {
             width: 100%;
-            max-width: 820px;
+            max-width: 770px;
             background: var(--term-container-bg);
             border: 1px solid var(--term-border);
             border-radius: 8px;
