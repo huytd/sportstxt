@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // TennisScoreboard represents the response from ESPN tennis scoreboard API
@@ -18,6 +19,22 @@ func padRight(s string, n int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", n-len(r))
+}
+
+func classFor(code string) string {
+	switch code {
+	case ansiGreen:
+		return "term-green"
+	case ansiGray:
+		return "term-gray"
+	case ansiBold:
+		return "term-bold"
+	case ansiBold + ansiGreen:
+		return "term-bold term-green"
+	case ansiBold + ansiRed:
+		return "term-bold term-red"
+	}
+	return ""
 }
 type TennisScoreboard struct {
 	Events []TennisEvent `json:"events"`
@@ -217,17 +234,18 @@ func renderTennisSchedule(tournaments []MergedTournament, dateStr string, format
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
 	// Sports Selector row
+	var banner strings.Builder
 	if format != "html" {
-		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
-		sb.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiBold+ansiGreen, format) + "\n")
-		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
+		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
+		banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiBold+ansiGreen, format) + "\n")
+		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
-	sb.WriteString(txt(strings.Repeat(" ", padding), format))
-	sb.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
+	banner.WriteString(txt(strings.Repeat(" ", padding), format))
+	banner.WriteString(style(title+"\n", ansiBold+ansiCyan, format))
 
 	// Date Navigation Row
-	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
-	sb.WriteString(txt(" ", format))
+	banner.WriteString(style("==============================================================================\n", ansiCyan, format))
+	banner.WriteString(txt(" ", format))
 	prevLinkText := fmt.Sprintf("<< PREV DAY (%s)", prevDateStr)
 	nextLinkText := fmt.Sprintf("NEXT DAY (%s) >>", nextDateStr)
 	spacerSize := layoutWidth - 1 - len(prevLinkText) - len(nextLinkText)
@@ -237,23 +255,84 @@ func renderTennisSchedule(tournaments []MergedTournament, dateStr string, format
 	if format == "html" {
 		prevLink := fmt.Sprintf(`<a href="/tennis?date=%s" class="term-link">%s</a>`, prevDateStr, prevLinkText)
 		nextLink := fmt.Sprintf(`<a href="/tennis?date=%s" class="term-link">%s</a>`, nextDateStr, nextLinkText)
-		sb.WriteString(prevLink + strings.Repeat(" ", spacerSize) + nextLink + "\n")
+		banner.WriteString(prevLink + strings.Repeat(" ", spacerSize) + nextLink + "\n")
 	} else {
-		sb.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
+		banner.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
 	}
-	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
+	banner.WriteString(style("==============================================================================\n", ansiCyan, format))
+	sb.WriteString(termPre(format, banner.String()))
 
 	if len(tournaments) == 0 {
 		sb.WriteString(txt(" No matches scheduled for this date.\n", format))
 		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
-		return sb.String()
+		return termPre(format, sb.String())
 	}
 
-	renderMatchRow := func(match TennisCompetition) {
+	// buildSetCell returns a cell whose HTML carries per-set winner coloring.
+	buildSetCell := func(comp TennisCompetitor) TableCell {
+		var plain, htmlB strings.Builder
+		for sIdx := 0; sIdx < 5; sIdx++ {
+			var valStr string
+			win, tb := false, false
+			if sIdx < len(comp.Linescores) {
+				valStr = fmt.Sprintf("%.0f", comp.Linescores[sIdx].Value)
+				win = comp.Linescores[sIdx].Winner
+				tb = comp.Linescores[sIdx].Tiebreak > 0
+			} else {
+				valStr = "-"
+			}
+			tbChar := ""
+			if tb {
+				tbChar = "ₜ"
+			}
+			plain.WriteString(valStr + tbChar + " ")
+			if format == "html" {
+				cls := ""
+				if win {
+					cls = "term-bold term-red"
+				}
+				if cls != "" {
+					htmlB.WriteString(`<span class="` + cls + `">` + valStr + tbChar + `</span> `)
+				} else {
+					htmlB.WriteString(`<span>` + valStr + tbChar + `</span> `)
+				}
+			}
+		}
+		if format == "html" {
+			return TableCell{Text: strings.TrimRight(plain.String(), " "), HTML: strings.TrimRight(htmlB.String(), " ")}
+		}
+		return TableCell{Text: strings.TrimRight(plain.String(), " ")}
+	}
+
+	playerCell := func(comp TennisCompetitor, isLive, isFinal bool) TableCell {
+		name := getCompetitorName(comp)
+		if utf8.RuneCountInString(name) > 24 {
+			name = string([]rune(name)[:23]) + "."
+		}
+		if comp.Possession {
+			name += "ₛ"
+		}
+		var code string
+		switch {
+		case isLive:
+			code = ansiGreen
+			if comp.Winner {
+				code = ansiBold + ansiGreen
+			}
+		case isFinal:
+			if comp.Winner {
+				code = ansiBold
+			}
+		default:
+			code = ansiGray
+		}
+		return TableCell{Text: name, ANSI: code, Class: classFor(code)}
+	}
+
+	addMatchRow := func(t *Table, match TennisCompetition, dateStr string) {
 		if len(match.Competitors) < 2 {
 			return
 		}
-
 		var homeComp, awayComp TennisCompetitor
 		for _, c := range match.Competitors {
 			if c.HomeAway == "home" {
@@ -263,155 +342,59 @@ func renderTennisSchedule(tournaments []MergedTournament, dateStr string, format
 			}
 		}
 
-		awayName := getCompetitorName(awayComp)
-		homeName := getCompetitorName(homeComp)
-		if len(awayName) > 23 {
-			awayName = awayName[:22] + "."
-		}
-		if len(homeName) > 23 {
-			homeName = homeName[:22] + "."
-		}
-
-		awayServes := ""
-		homeServes := ""
-		if awayComp.Possession {
-			awayServes = "ₛ"
-		}
-		if homeComp.Possession {
-			homeServes = "ₛ"
-		}
-
-		awayNameWithServe := awayName + awayServes
-		homeNameWithServe := homeName + homeServes
-
 		state := match.Status.Type.State
 		isLive := state == "in"
 		isFinal := state == "post"
 
-		awaySets := ""
-		homeSets := ""
-
-		for sIdx := 0; sIdx < 5; sIdx++ {
-			var aScore, hScore string
-			aScoreVal := -1.0
-			hScoreVal := -1.0
-			aWin := false
-			hWin := false
-			var aTB, hTB float64
-
-			if sIdx < len(awayComp.Linescores) {
-				aScoreVal = awayComp.Linescores[sIdx].Value
-				aWin = awayComp.Linescores[sIdx].Winner
-				aTB = awayComp.Linescores[sIdx].Tiebreak
-			}
-			if sIdx < len(homeComp.Linescores) {
-				hScoreVal = homeComp.Linescores[sIdx].Value
-				hWin = homeComp.Linescores[sIdx].Winner
-				hTB = homeComp.Linescores[sIdx].Tiebreak
-			}
-
-			if aScoreVal >= 0 {
-				valStr := fmt.Sprintf("%.0f", aScoreVal)
-				switch {
-				case aWin && aTB > 0:
-					aScore = style(fmt.Sprintf(" %sₜ ", valStr), ansiBold+ansiRed, format)
-				case aWin:
-					aScore = style(fmt.Sprintf(" %s  ", valStr), ansiBold+ansiRed, format)
-				case aTB > 0:
-					aScore = style(fmt.Sprintf(" %sₜ ", valStr), "", format)
-				default:
-					aScore = style(fmt.Sprintf(" %s  ", valStr), "", format)
-				}
-			} else {
-				aScore = "    "
-			}
-
-			if hScoreVal >= 0 {
-				valStr := fmt.Sprintf("%.0f", hScoreVal)
-				switch {
-				case hWin && hTB > 0:
-					hScore = style(fmt.Sprintf(" %sₜ ", valStr), ansiBold+ansiRed, format)
-				case hWin:
-					hScore = style(fmt.Sprintf(" %s  ", valStr), ansiBold+ansiRed, format)
-				case hTB > 0:
-					hScore = style(fmt.Sprintf(" %sₜ ", valStr), "", format)
-				default:
-					hScore = style(fmt.Sprintf(" %s  ", valStr), "", format)
-				}
-			} else {
-				hScore = "    "
-			}
-
-			awaySets += aScore
-			homeSets += hScore
-		}
-
-		setColWidth := 20
-		awaySets = padRight(awaySets, setColWidth)
-		homeSets = padRight(homeSets, setColWidth)
-
-		statusStr := strings.TrimSuffix(match.Status.Type.Detail, " Set")
-		if len(statusStr) > 12 {
-			statusStr = statusStr[:11] + "."
-		}
-
-		var idStyle, roundStyle, awayPlayerStyle, homePlayerStyle string
+		var idStyle, roundStyle string
 		if isLive {
 			idStyle = ansiGreen
 			roundStyle = ansiGreen
-			awayPlayerStyle = ansiGreen
-			homePlayerStyle = ansiGreen
-			if awayComp.Winner {
-				awayPlayerStyle = ansiBold + ansiGreen
-			} else if homeComp.Winner {
-				homePlayerStyle = ansiBold + ansiGreen
-			}
-		} else if isFinal {
-			idStyle = ansiGray
-			roundStyle = ansiGray
-			awayPlayerStyle = ""
-			homePlayerStyle = ""
-			if awayComp.Winner {
-				awayPlayerStyle = ansiBold
-			} else if homeComp.Winner {
-				homePlayerStyle = ansiBold
-			}
 		} else {
 			idStyle = ansiGray
 			roundStyle = ansiGray
-			awayPlayerStyle = ansiGray
-			homePlayerStyle = ansiGray
 		}
 
-		idVal := match.ID
-
-		var idPart string
-		if format == "html" {
-			idPart = fmt.Sprintf(`<a href="/tennis/game/%s?date=%s" style="text-decoration:none">%s</a>`, idVal, dateStr, style(padRight(idVal, 7), idStyle, format))
-		} else {
-			idPart = style(padRight(idVal, 7), idStyle, format)
+		statusStr := strings.TrimSuffix(match.Status.Type.Detail, " Set")
+		if utf8.RuneCountInString(statusStr) > 12 {
+			statusStr = string([]rune(statusStr)[:11]) + "."
 		}
-		roundPart := style(padRight(abbreviateRound(match.Round.DisplayName), 5), roundStyle, format)
-		awayPlayerPart := style(padRight(awayNameWithServe, 25), awayPlayerStyle, format)
-		homePlayerPart := style(padRight(homeNameWithServe, 25), homePlayerStyle, format)
-		statusPart := style(padRight(statusStr, 12), idStyle, format)
 
-		sb.WriteString(fmt.Sprintf(" %s %s %s %s %s\n", idPart, roundPart, awayPlayerPart, awaySets, statusPart))
-		sb.WriteString(fmt.Sprintf(" %s %s %s\n", strings.Repeat(" ", 13), homePlayerPart, homeSets))
-		sb.WriteString(txt("\n", format))
+		t.AddRow(
+			TableCell{Text: match.ID, Link: "/tennis/game/" + match.ID + "?date=" + dateStr},
+			TableCell{Text: abbreviateRound(match.Round.DisplayName), ANSI: roundStyle, Class: classFor(roundStyle)},
+			playerCell(awayComp, isLive, isFinal),
+			buildSetCell(awayComp),
+			TableCell{Text: statusStr, ANSI: idStyle, Class: classFor(idStyle)},
+		)
+		t.AddRow(
+			TableCell{Text: ""},
+			TableCell{Text: ""},
+			playerCell(homeComp, isLive, isFinal),
+			buildSetCell(homeComp),
+			TableCell{Text: ""},
+		)
 	}
 
-	renderSection := func(matches []TennisCompetition, header string, headerStyle string) {
+	renderTable := func(matches []TennisCompetition, header string, headerStyle string) {
 		if len(matches) == 0 {
 			return
 		}
-		sb.WriteString(style(" -----------------------------------------------------------------------------\n", ansiCyan, format))
-		sb.WriteString(style(fmt.Sprintf(" %-7s %-5s %-25s %-20s %-12s\n", "ID", "ROUND", "PLAYERS", "SETS", "STATUS"), ansiBold, format))
-		sb.WriteString(style(" -----------------------------------------------------------------------------\n", ansiCyan, format))
-		sb.WriteString(style(fmt.Sprintf(" %s\n", header), ansiBold+headerStyle, format))
+		var h strings.Builder
+		h.WriteString(style(fmt.Sprintf("\n %s\n", header), ansiBold+headerStyle, format))
+		sb.WriteString(termPre(format, h.String()))
+
+		t := NewTable(format,
+			TableCol{Title: "ID", Width: 9},
+			TableCol{Title: "RND", Width: 5},
+			TableCol{Title: "PLAYER", Width: 24},
+			TableCol{Title: "SETS", Width: 14},
+			TableCol{Title: "STATUS", Width: 12},
+		)
 		for _, m := range matches {
-			renderMatchRow(m)
+			addMatchRow(t, m, dateStr)
 		}
+		sb.WriteString(t.Render())
 	}
 
 	// First pass: collect all live matches (flat, across tournaments) and non-live per tournament
@@ -466,27 +449,26 @@ func renderTennisSchedule(tournaments []MergedTournament, dateStr string, format
 
 	// Render live matches section at top (flat across all tournaments)
 	if len(allLive) > 0 {
-		sb.WriteString(style("\n >> LIVE MATCHES\n", ansiBold+ansiGreen, format))
-		sb.WriteString(style(" -----------------------------------------------------------------------------\n", ansiCyan, format))
-		sb.WriteString(style(fmt.Sprintf(" %-7s %-5s %-25s %-20s %-12s\n", "ID", "ROUND", "PLAYERS", "SETS", "STATUS"), ansiBold, format))
-		sb.WriteString(style(" -----------------------------------------------------------------------------\n", ansiCyan, format))
+		var live []TennisCompetition
 		for _, e := range allLive {
-			renderMatchRow(e.match)
+			live = append(live, e.match)
 		}
+		renderTable(live, ">> LIVE MATCHES", ansiGreen)
 	}
 
 	// Render per-tournament non-live sections
 	for _, ng := range allNonLive {
-		sb.WriteString(style(fmt.Sprintf("\n TOURNAMENT: %s (%s)\n", ng.tournament.Event.Name, ng.tournament.Tour), ansiBold+ansiCyan, format))
-		renderSection(ng.matches, ">> FINAL / UPCOMING", ansiGray)
+		renderTable(ng.matches, fmt.Sprintf("TOURNAMENT: %s (%s)", ng.tournament.Event.Name, ng.tournament.Tour), ansiCyan)
 	}
 
+	var footer strings.Builder
 	if format == "ansi" {
-		sb.WriteString(txt(" Run 'curl http://localhost:9090/tennis/game/<ID>' to view a match in real-time.\n", format))
+		footer.WriteString(txt(" Run 'curl http://localhost:9090/tennis/game/<ID>' to view a match in real-time.\n", format))
 	} else {
-		sb.WriteString(txt(" Click on a game ID to view the match in real-time.\n", format))
+		footer.WriteString(txt(" Click on a game ID to view the match in real-time.\n", format))
 	}
-	sb.WriteString(style("==============================================================================\n", ansiCyan, format))
+	footer.WriteString(style("==============================================================================\n", ansiCyan, format))
+	sb.WriteString(termPre(format, footer.String()))
 
 	return sb.String()
 }
@@ -565,22 +547,11 @@ func renderTennisGame(comp TennisCompetition, event TennisEvent, tour string, da
 
 	subTitleLine := fmt.Sprintf(" Tournament: %s\n Venue: %s - %s\n", event.Name, comp.Venue.FullName, comp.Venue.Court)
 
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
-	sb.WriteString(titleLine)
-	sb.WriteString(style(subTitleLine, ansiGray, format))
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
-
-	sb.WriteString("\n")
-	sb.WriteString(" Status: " + style(detail, ansiYellow, format) + "\n")
-
 	servingPlayer := ""
 	if awayComp.Possession {
 		servingPlayer = awayName
 	} else if homeComp.Possession {
 		servingPlayer = homeName
-	}
-	if servingPlayer != "" {
-		sb.WriteString(" " + style("* SERVING: "+servingPlayer, ansiYellow, format) + "\n")
 	}
 
 	maxSets := 5
@@ -594,26 +565,80 @@ func renderTennisGame(comp TennisCompetition, event TennisEvent, tour string, da
 		maxSets = 3
 	}
 
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
-	sb.WriteString(style(" PLAYERS                    ", ansiBold, format))
-	for i := 1; i <= maxSets; i++ {
-		sb.WriteString(style(fmt.Sprintf("S%-4d", i), ansiBold, format))
+	var header strings.Builder
+	header.WriteString(style("========================================================================\n", ansiCyan, format))
+	header.WriteString(titleLine)
+	header.WriteString(style(subTitleLine, ansiGray, format))
+	header.WriteString(style("========================================================================\n", ansiCyan, format))
+	header.WriteString("\n")
+	header.WriteString(" Status: " + style(detail, ansiYellow, format) + "\n")
+	if servingPlayer != "" {
+		header.WriteString(" " + style("* SERVING: "+servingPlayer, ansiYellow, format) + "\n")
 	}
-	sb.WriteString(style("| SETS\n", ansiBold, format))
-	if len(comp.Notes) > 0 {
-		for _, note := range comp.Notes {
-			sb.WriteString(" " + style(">> "+note.Text, ansiBold+ansiGreen, format) + "\n")
-		}
-	}
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	sb.WriteString(termPre(format, header.String()))
 
-	awayNameShort := getCompetitorName(awayComp)
-	homeNameShort := getCompetitorName(homeComp)
-	if len(awayNameShort) > 25 {
-		awayNameShort = awayNameShort[:24] + "."
+	if len(comp.Notes) > 0 {
+		var notes strings.Builder
+		for _, note := range comp.Notes {
+			notes.WriteString(" " + style(">> "+note.Text, ansiBold+ansiGreen, format) + "\n")
+		}
+		sb.WriteString(termPre(format, notes.String()))
 	}
-	if len(homeNameShort) > 25 {
-		homeNameShort = homeNameShort[:24] + "."
+
+	isLive := state == "in"
+	isFinal := state == "post"
+
+	playerCell := func(comp TennisCompetitor) TableCell {
+		name := getCompetitorName(comp)
+		if utf8.RuneCountInString(name) > 24 {
+			name = string([]rune(name)[:23]) + "."
+		}
+		if comp.Possession {
+			name += "ₛ"
+		}
+		var code string
+		switch {
+		case isLive:
+			code = ansiGreen
+			if comp.Winner {
+				code = ansiBold + ansiGreen
+			}
+		case isFinal:
+			if comp.Winner {
+				code = ansiBold
+			}
+		default:
+			code = ansiGray
+		}
+		return TableCell{Text: name, ANSI: code, Class: classFor(code)}
+	}
+
+	setCell := func(comp TennisCompetitor, sIdx int) TableCell {
+		var valStr string
+		win, tb := false, false
+		if sIdx < len(comp.Linescores) {
+			valStr = fmt.Sprintf("%.0f", comp.Linescores[sIdx].Value)
+			win = comp.Linescores[sIdx].Winner
+			tb = comp.Linescores[sIdx].Tiebreak > 0
+		} else {
+			valStr = "--"
+		}
+		tbChar := ""
+		if tb {
+			tbChar = "ₜ"
+		}
+		if format == "html" {
+			cls := ""
+			if win {
+				cls = "term-bold term-red"
+			}
+			return TableCell{Text: valStr + tbChar, HTML: `<span class="` + cls + `">` + valStr + tbChar + `</span>`, Align: alignRight}
+		}
+		code := ""
+		if win {
+			code = ansiBold + ansiRed
+		}
+		return TableCell{Text: valStr + tbChar, ANSI: code, Align: alignRight}
 	}
 
 	awaySetsWon := 0
@@ -629,62 +654,37 @@ func renderTennisGame(comp TennisCompetition, event TennisEvent, tour string, da
 		}
 	}
 
-	sb.WriteString(txt(" "+padRight(awayNameShort, 26)+" ", format))
-	for sIdx := 0; sIdx < maxSets; sIdx++ {
-		val := " --  "
-		if sIdx < len(awayComp.Linescores) {
-			scoreVal := awayComp.Linescores[sIdx].Value
-			win := awayComp.Linescores[sIdx].Winner
-			tb := awayComp.Linescores[sIdx].Tiebreak
-			valStr := fmt.Sprintf("%.0f", scoreVal)
-			switch {
-			case win && tb > 0:
-				val = style(fmt.Sprintf(" %sₜ  ", valStr), ansiBold+ansiRed, format)
-			case win:
-				val = style(fmt.Sprintf(" %s   ", valStr), ansiBold+ansiRed, format)
-			case tb > 0:
-				val = style(fmt.Sprintf(" %sₜ  ", valStr), "", format)
-			default:
-				val = style(fmt.Sprintf(" %s   ", valStr), "", format)
-			}
-		}
-		sb.WriteString(val)
+	cols := []TableCol{{Title: "PLAYER", Width: 26}}
+	for i := 1; i <= maxSets; i++ {
+		cols = append(cols, TableCol{Title: fmt.Sprintf("S%d", i), Width: 3, Align: alignRight})
 	}
-	sb.WriteString(txt(fmt.Sprintf("|  %d\n", awaySetsWon), format))
+	cols = append(cols, TableCol{Title: "SETS", Width: 3, Align: alignRight})
 
-	sb.WriteString(txt(" "+padRight(homeNameShort, 26)+" ", format))
+	st := NewTable(format, cols...)
+
+	awayRow := []TableCell{playerCell(awayComp)}
 	for sIdx := 0; sIdx < maxSets; sIdx++ {
-		val := " --  "
-		if sIdx < len(homeComp.Linescores) {
-			scoreVal := homeComp.Linescores[sIdx].Value
-			win := homeComp.Linescores[sIdx].Winner
-			tb := homeComp.Linescores[sIdx].Tiebreak
-			valStr := fmt.Sprintf("%.0f", scoreVal)
-			switch {
-			case win && tb > 0:
-				val = style(fmt.Sprintf(" %sₜ  ", valStr), ansiBold+ansiRed, format)
-			case win:
-				val = style(fmt.Sprintf(" %s   ", valStr), ansiBold+ansiRed, format)
-			case tb > 0:
-				val = style(fmt.Sprintf(" %sₜ  ", valStr), "", format)
-			default:
-				val = style(fmt.Sprintf(" %s   ", valStr), "", format)
-			}
-		}
-		sb.WriteString(val)
+		awayRow = append(awayRow, setCell(awayComp, sIdx))
 	}
-	sb.WriteString(txt(fmt.Sprintf("|  %d\n", homeSetsWon), format))
+	awayRow = append(awayRow, TableCell{Text: fmt.Sprintf("%d", awaySetsWon), Align: alignRight})
+	st.AddRow(awayRow...)
 
-	sb.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+	homeRow := []TableCell{playerCell(homeComp)}
+	for sIdx := 0; sIdx < maxSets; sIdx++ {
+		homeRow = append(homeRow, setCell(homeComp, sIdx))
+	}
+	homeRow = append(homeRow, TableCell{Text: fmt.Sprintf("%d", homeSetsWon), Align: alignRight})
+	st.AddRow(homeRow...)
+
+	sb.WriteString(st.Render())
 	sb.WriteString("\n")
-	sb.WriteString(style("========================================================================\n", ansiCyan, format))
 
 	if format == "ansi" {
 		sb.WriteString(txt(fmt.Sprintf(" Run 'curl http://localhost:9090/tennis?date=%s' to return to the scoreboard.\n", dateStr), format))
 		sb.WriteString(style("========================================================================\n", ansiCyan, format))
 	}
 
-	return sb.String()
+	return termPre(format, sb.String())
 }
 
 func handleTennisSchedule(w http.ResponseWriter, r *http.Request) {
@@ -788,7 +788,7 @@ func handleTennisGame(w http.ResponseWriter, r *http.Request) {
 			sb.WriteString(style("========================================================================\n", ansiRed, format))
 		}
 
-		writeResponse(w, format, sb.String())
+		writeResponse(w, format, termPre(format, sb.String()))
 		return
 	}
 

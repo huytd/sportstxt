@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata"
+	"unicode/utf8"
 )
 
 // ANSI terminal style escape codes
@@ -75,6 +76,201 @@ func txt(text string, format string) string {
 		return html.EscapeString(text)
 	}
 	return text
+}
+
+// ---------------------------------------------------------------------------
+// Table-based rendering helpers
+//
+// These let render functions describe tabular data once and emit either:
+//   - ANSI boxed text (for curl / raw terminals)
+//   - semantic HTML <table> elements styled to look like a terminal (browser)
+//
+// Non-tabular text (banners, ASCII art, play-by-play) is wrapped with termPre
+// so it keeps its monospace / terminal look inside the browser too.
+// ---------------------------------------------------------------------------
+
+type cellAlign int
+
+const (
+	alignLeft cellAlign = iota
+	alignRight
+)
+
+// TableCell is a single cell value.
+type TableCell struct {
+	Text  string
+	Class string    // optional term-* class for coloring (HTML)
+	ANSI  string    // optional ANSI style code for coloring (ANSI / curl)
+	Link  string    // optional href; when set the cell renders as a link
+	Align cellAlign // optional per-cell alignment override
+	HTML  string    // optional raw HTML content (HTML mode only); overrides escaped Text
+}
+
+// TableCol describes a column: its header plus default alignment/width.
+type TableCol struct {
+	Title string
+	Width int // minimum column width (runes) for ANSI output
+	Class string
+	ANSI  string // default ANSI code applied to every cell in this column
+	Align cellAlign
+}
+
+// Table accumulates rows and renders them for the active format.
+type Table struct {
+	format  string
+	cols    []TableCol
+	caption string
+	rows    [][]TableCell
+}
+
+func NewTable(format string, cols ...TableCol) *Table {
+	return &Table{format: format, cols: cols}
+}
+
+func (t *Table) SetCaption(c string) { t.caption = c }
+
+func (t *Table) AddRow(cells ...TableCell) { t.rows = append(t.rows, cells) }
+
+func (t *Table) Render() string {
+	if t.format == "ansi" {
+		return t.renderAnsi()
+	}
+	return t.renderHTML()
+}
+
+func (t *Table) computeWidths() []int {
+	widths := make([]int, len(t.cols))
+	for i, c := range t.cols {
+		widths[i] = utf8.RuneCountInString(c.Title)
+	}
+	for _, row := range t.rows {
+		for i, cell := range row {
+			if i < len(widths) {
+				w := utf8.RuneCountInString(cell.Text)
+				if w > widths[i] {
+					widths[i] = w
+				}
+			}
+		}
+	}
+	for i := range widths {
+		if t.cols[i].Width > widths[i] {
+			widths[i] = t.cols[i].Width
+		}
+	}
+	return widths
+}
+
+func (t *Table) renderAnsi() string {
+	widths := t.computeWidths()
+	var b strings.Builder
+	if t.caption != "" {
+		b.WriteString(style(t.caption+"\n", ansiBold+ansiCyan, "ansi"))
+	}
+	writeBorder := func() {
+		b.WriteString("+")
+		for _, w := range widths {
+			b.WriteString(strings.Repeat("-", w+2) + "+")
+		}
+		b.WriteString("\n")
+	}
+	writeBorder()
+	b.WriteString("|")
+	for i, c := range t.cols {
+		padded := padRune(c.Title, widths[i], c.Align)
+		b.WriteString(" " + style(padded, ansiBold, "ansi") + " |")
+	}
+	b.WriteString("\n")
+	writeBorder()
+	for _, row := range t.rows {
+		b.WriteString("|")
+		for i, cell := range row {
+			eff := t.cols[i].Align
+			if cell.Align != alignLeft {
+				eff = cell.Align
+			}
+			code := cell.ANSI
+			if code == "" {
+				code = t.cols[i].ANSI
+			}
+			padded := padRune(cell.Text, widths[i], eff)
+			if code != "" {
+				padded = style(padded, code, "ansi")
+			}
+			b.WriteString(" " + padded + " |")
+		}
+		b.WriteString("\n")
+	}
+	writeBorder()
+	return b.String()
+}
+
+func (t *Table) renderHTML() string {
+	var b strings.Builder
+	b.WriteString(`<table class="term-table">`)
+	if t.caption != "" {
+		b.WriteString(`<caption>` + html.EscapeString(t.caption) + `</caption>`)
+	}
+	b.WriteString(`<thead><tr>`)
+	for _, c := range t.cols {
+		b.WriteString(`<th` + classAttr(c.Class, c.Align) + `>` + html.EscapeString(c.Title) + `</th>`)
+	}
+	b.WriteString(`</tr></thead><tbody>`)
+	for _, row := range t.rows {
+		b.WriteString(`<tr>`)
+		for _, cell := range row {
+			cls := classAttr(cell.Class, cell.Align)
+			var inner string
+			content := cell.Text
+			if cell.HTML != "" {
+				content = cell.HTML
+			}
+			if cell.Link != "" {
+				inner = `<a href="` + html.EscapeString(cell.Link) + `" class="term-link">` + content + `</a>`
+			} else {
+				inner = content
+			}
+			b.WriteString(`<td` + cls + `>` + inner + `</td>`)
+		}
+		b.WriteString(`</tr>`)
+	}
+	b.WriteString(`</tbody></table>`)
+	return b.String()
+}
+
+func classAttr(base string, align cellAlign) string {
+	var parts []string
+	if base != "" {
+		parts = append(parts, base)
+	}
+	if align == alignRight {
+		parts = append(parts, "num")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ` class="` + strings.Join(parts, " ") + `"`
+}
+
+func padRune(s string, width int, align cellAlign) string {
+	n := utf8.RuneCountInString(s)
+	if n >= width {
+		return s
+	}
+	pad := width - n
+	if align == alignRight {
+		return strings.Repeat(" ", pad) + s
+	}
+	return s + strings.Repeat(" ", pad)
+}
+
+// termPre wraps non-tabular text so it keeps its monospace / terminal look in
+// the browser. In ANSI mode it is a no-op pass-through.
+func termPre(format, s string) string {
+	if format == "html" {
+		return `<pre class="term-art">` + s + `</pre>` + "\n"
+	}
+	return s
 }
 
 // dots creates dot-indicators for balls/strikes/outs

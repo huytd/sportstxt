@@ -70,8 +70,18 @@
             transition: background-color 0.3s ease, border-color 0.3s ease;
         }
 
-        pre {
-            margin: 0;
+        .term-content {
+            font-family: inherit;
+            font-size: 15px;
+            line-height: 1.6;
+            white-space: normal;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        /* Monospace text / ASCII-art blocks retain the terminal look */
+        .term-art {
+            margin: 0 0 12px 0;
             font-family: inherit;
             font-size: 15px;
             line-height: 1.6;
@@ -86,18 +96,80 @@
             scrollbar-width: thin;
         }
 
+        .term-art:last-child {
+            margin-bottom: 0;
+        }
+
         /* Legacy fallback for WebKit/Blink browsers */
         @supports not (scrollbar-color: auto) {
-            pre::-webkit-scrollbar {
+            .term-art::-webkit-scrollbar {
                 height: 6px;
             }
-            pre::-webkit-scrollbar-thumb {
+            .term-art::-webkit-scrollbar-thumb {
                 background: var(--scrollbar-thumb);
                 border-radius: 3px;
             }
-            pre::-webkit-scrollbar-track {
+            .term-art::-webkit-scrollbar-track {
                 background: var(--scrollbar-track);
             }
+        }
+
+        /* Semantic tables that mimic the fixed-width terminal layout */
+        table.term-table {
+            border-collapse: collapse;
+            width: auto;
+            margin: 0 0 12px 0;
+            font-family: inherit;
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--color-primary);
+            border: 1px solid var(--term-border);
+        }
+
+        table.term-table caption {
+            caption-side: top;
+            text-align: left;
+            font-weight: bold;
+            color: var(--term-cyan);
+            padding: 0 0 4px 0;
+        }
+
+        table.term-table th,
+        table.term-table td {
+            border: 1px solid var(--term-border);
+            padding: 2px 10px;
+            text-align: left;
+            white-space: nowrap;
+            vertical-align: top;
+        }
+
+        table.term-table th {
+            font-weight: bold;
+        }
+
+        table.term-table td.num,
+        table.term-table th.num {
+            text-align: right;
+        }
+
+        table.term-table tbody tr:hover {
+            background-color: var(--term-highlight-bg);
+        }
+
+        /* Compact game summary boxes on the scoreboard */
+        table.game-box {
+            border: 1px solid var(--term-cyan);
+            margin: 0;
+        }
+        table.game-box th,
+        table.game-box td {
+            border: none;
+            padding: 1px 10px;
+            white-space: nowrap;
+        }
+        table.game-box thead th {
+            text-align: center;
+            border-bottom: 1px solid var(--term-cyan);
         }
 
         /* Colored spans rendered by Go backend */
@@ -186,7 +258,7 @@
                 padding: 16px;
                 border-radius: 6px;
             }
-            pre {
+            .term-art, .term-content {
                 font-size: 13px;
             }
             .status-bar {
@@ -204,7 +276,7 @@
                 padding: 12px;
                 border-radius: 4px;
             }
-            pre {
+            .term-art, .term-content {
                 font-size: 11px;
             }
         }
@@ -216,7 +288,7 @@
             .term-container {
                 padding: 10px;
             }
-            pre {
+            .term-art, .term-content {
                 font-size: 9.5px;
             }
             .status-bar {
@@ -225,7 +297,7 @@
         }
 
         @media (max-width: 380px) {
-            pre {
+            .term-art, .term-content {
                 font-size: 8.5px;
             }
         }
@@ -247,7 +319,7 @@
             <span id="status-left"><span class="dot-pulse"></span>LIVE FEED</span>
             <span id="status-right">SYS TIME: --:--:--</span>
         </div>
-        <pre id="terminal-content">LOADING SCOREBOARD...</pre>
+        <div id="terminal-content" class="term-content">LOADING SCOREBOARD...</div>
     </div>
 
     <script>
