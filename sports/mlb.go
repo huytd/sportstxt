@@ -443,7 +443,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 	var banner strings.Builder
 	if format != "html" {
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
-		banner.WriteString(txt("           ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
+		banner.WriteString(txt("           ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[BASKETBALL]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	banner.WriteString(txt(strings.Repeat(" ", padding), format))
@@ -465,6 +465,19 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 	} else {
 		banner.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
 	}
+
+	// MLB sub-navigation (Standings / Compare Teams / Teams)
+	banner.WriteString(txt(" ", format))
+	if format == "html" {
+		banner.WriteString(`<a href="/mlb/standings" class="term-link">Standings</a>` + txt("   ", format) +
+			`<a href="/mlb/compare" class="term-link">Compare Teams</a>` + txt("   ", format) +
+			`<a href="/mlb/team/130" class="term-link">Teams</a>` + "\n")
+	} else {
+		banner.WriteString(style("[ Standings ]", ansiGreen, format) + txt("  ", format) +
+			style("[ Compare Teams ]", ansiGreen, format) + txt("  ", format) +
+			style("[ Teams ]", ansiGreen, format) + "\n")
+	}
+
 	banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 
 	sb.WriteString(termPre(format, banner.String()))

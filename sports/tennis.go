@@ -237,7 +237,7 @@ func renderTennisSchedule(tournaments []MergedTournament, dateStr string, format
 	var banner strings.Builder
 	if format != "html" {
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
-		banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiBold+ansiGreen, format) + "\n")
+		banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[BASKETBALL]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiBold+ansiGreen, format) + "\n")
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	banner.WriteString(txt(strings.Repeat(" ", padding), format))

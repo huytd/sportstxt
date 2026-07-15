@@ -300,10 +300,8 @@ func renderBasketballSchedule(entries []basketballScheduleEntry, dateStr string,
 	cols = append(cols,
 		TableCol{Title: "ID", Width: 9},
 		TableCol{Title: "TIME", Width: 8},
-		TableCol{Title: "AWAY TEAM", Width: 17},
+		TableCol{Title: "TEAM", Width: 18},
 		TableCol{Title: "PTS", Width: 3, Align: alignRight},
-		TableCol{Title: "PTS", Width: 3, Align: alignRight},
-		TableCol{Title: "HOME TEAM", Width: 17},
 		TableCol{Title: "STATUS", Width: 10},
 	)
 	t := NewTable(format, cols...)
@@ -413,24 +411,33 @@ func renderBasketballSchedule(entries []basketballScheduleEntry, dateStr string,
 			gameTime = t.In(loc).Format("03:04 PM")
 		}
 
-		row := []TableCell{}
-		if combined {
-			row = append(row, TableCell{Text: ev.league.Name, Class: classFor(baseStyle), ANSI: baseStyle})
-		}
 		gameLink := "/nba/game/" + idStr
 		if combined {
 			gameLink = "/basketball/game/" + idStr + "?league=" + ev.league.Slug
 		}
-		row = append(row,
+
+		awayRow := []TableCell{}
+		homeRow := []TableCell{}
+		if combined {
+			awayRow = append(awayRow, TableCell{Text: ev.league.Name, Class: classFor(baseStyle), ANSI: baseStyle})
+			homeRow = append(homeRow, TableCell{Text: ""})
+		}
+		awayRow = append(awayRow,
 			TableCell{Text: idStr, Link: gameLink},
 			TableCell{Text: gameTime, Class: classFor(baseStyle), ANSI: baseStyle},
 			TableCell{Text: awayName, Class: classFor(awayStyle), ANSI: awayStyle},
 			TableCell{Text: awayScoreStr, Align: alignRight, Class: classFor(awayStyle), ANSI: awayStyle},
-			TableCell{Text: homeScoreStr, Align: alignRight, Class: classFor(homeStyle), ANSI: homeStyle},
-			TableCell{Text: homeName, Class: classFor(homeStyle), ANSI: homeStyle},
 			TableCell{Text: statusStr, Class: classFor(baseStyle), ANSI: baseStyle},
 		)
-		t.AddRow(row...)
+		homeRow = append(homeRow,
+			TableCell{Text: ""},
+			TableCell{Text: ""},
+			TableCell{Text: homeName, Class: classFor(homeStyle), ANSI: homeStyle},
+			TableCell{Text: homeScoreStr, Align: alignRight, Class: classFor(homeStyle), ANSI: homeStyle},
+			TableCell{Text: ""},
+		)
+		t.AddRow(awayRow...)
+		t.AddRow(homeRow...)
 	}
 
 	sb.WriteString(t.Render())
@@ -442,7 +449,7 @@ func renderBasketballSchedule(entries []basketballScheduleEntry, dateStr string,
 		if combined {
 			linkPath = "/basketball/game/<ID>?league=<LEAGUE>"
 		}
-		footer.WriteString(txt(fmt.Sprintf(" Run 'curl http://localhost:9090%s' to view a game in real-time.\n", linkPath), format))
+		footer.WriteString(txt(fmt.Sprintf(" Run 'curl ...%s' for live game detail.\n", linkPath), format))
 	} else {
 		footer.WriteString(txt(" Click on a game ID to view the game in real-time.\n", format))
 	}
