@@ -395,9 +395,138 @@
             }
         }
 
+        // ---- Tennis live point-by-point score (client-side, Vercel-safe) ----
+        // Vercel serverless functions often cannot reach TennisLive.net (Cloudflare),
+        // so the point score is fetched from the user's browser through a CORS
+        // proxy and overlaid onto the rendered match page. Degrades silently.
+        const TENNISLIVE_PROXY = 'https://api.allorigins.win/raw?url=';
+
+        function parseTennisLivePoint(htmlStr) {
+            const re = /class="mp_info_txt">([^<]*)<\/td>[\s\S]*?class="mp_15">([^<]*)<\/td>/g;
+            let m, last = null;
+            while ((m = re.exec(htmlStr)) !== null) last = m;
+            if (!last) return null;
+            const gameScore = last[1].replace(/<[^>]*>/g, '').trim();
+            const prog = last[2].replace(/<[^>]*>/g, '').trim();
+            const tokens = prog.split(',').map(s => s.trim()).filter(s => s);
+            let cur = tokens.length ? tokens[tokens.length - 1] : '';
+            const bp = cur.includes('[BP]');
+            cur = cur.replace(/\[BP\]/g, '').trim();
+            let display = cur;
+            if (cur === '40-40') display = '40-40 (Deuce)';
+            else if (cur === 'A-40') display = 'Ad (Server)';
+            else if (cur === '40-A') display = 'Ad (Returner)';
+            // server = mp_serve cell with an <img> in the same <tr> as the last info_txt
+            const infoIdx = htmlStr.indexOf(last[1]);
+            const trStart = htmlStr.lastIndexOf('<tr', infoIdx);
+            const rowEnd = htmlStr.indexOf('</tr>', infoIdx);
+            let server = '';
+            if (trStart >= 0 && rowEnd > trStart) {
+                const row = htmlStr.substring(trStart, rowEnd);
+                const srv = /class="mp_serve">([^<]*?)(<img[^>]*>)?<\/td>/g;
+                let sm;
+                while ((sm = srv.exec(row)) !== null) {
+                    if (sm[2]) server = sm[1].replace(/<[^>]*>/g, '').trim();
+                }
+            }
+            return { gameScore, display, cur, bp, server };
+        }
+
+        function buildLivePointBlock(pt) {
+            let pointLine = pt.display;
+            if (pt.bp) pointLine += '  [BREAK POINT]';
+            const lines = [
+                '------------------------------------------------------------------------',
+                ' LIVE GAME SCORE  (point-by-point · TennisLive)',
+                '------------------------------------------------------------------------',
+                ' CURRENT GAME: ' + pt.gameScore,
+                ' POINTS      : ' + pointLine,
+            ];
+            if (pt.server) lines.push(' SERVER      : ★ ' + pt.server);
+            lines.push('------------------------------------------------------------------------');
+            const pre = document.createElement('pre');
+            pre.className = 'term-art tennislive-points';
+            pre.textContent = lines.join('\n');
+            return pre;
+        }
+
+        async function fetchTennisLivePoints() {
+            try {
+                if (!window.location.pathname.startsWith('/tennis/game/')) return;
+                const res = await fetch(window.location.pathname + '?raw=1', { cache: 'no-store' });
+                if (!res.ok) return;
+                const txt = await res.text();
+                // only attach for in-progress matches
+                if (!/\[IN\]/.test(txt)) return;
+                // Extract the two player full names from the title line
+                const titleMatch = txt.match(/\[IN\]\s+([^-]+?)\s+vs\s+([^-]+?)\s+\(ATP|WTA\)/);
+                if (!titleMatch) return;
+                const p1 = titleMatch[1].trim();
+                const p2 = titleMatch[2].trim();
+                const tour = titleMatch[0].includes('(ATP)') ? 'atp' : 'wta';
+                // Build a TennisLive search URL by slugifying names + guessing the listing
+                // Simpler: scrape the TennisLive homepage listing to find the detail URL.
+                const listingUrl = TENNISLIVE_PROXY + encodeURIComponent('https://www.tennislive.net/');
+                const lr = await fetch(listingUrl, { cache: 'no-store' });
+                if (!lr.ok) return;
+                const lh = await lr.text();
+                const linkRe = /<a href="(https:\/\/www\.tennislive\.net\/(atp|wta)\/match\/[^"]+)"[^>]*class="nu-reward"/g;
+                const matchRe = /class="match "><a href="https:\/\/www\.tennislive\.net\/(?:atp|wta)\/[^"]+"[^>]*>([^<]+)<\/a>/g;
+                let lm, detailUrl = null;
+                const links = [];
+                while ((lm = linkRe.exec(lh)) !== null) links.push(lm);
+                for (const l of links) {
+                    const url = l[1]; const t = l[2];
+                    const pos = lh.indexOf(url);
+                    const before = [];
+                    let mm; matchRe.lastIndex = 0;
+                    while ((mm = matchRe.exec(lh.substring(0, pos))) !== null) before.push(mm[1]);
+                    matchRe.lastIndex = 0;
+                    let after = null; const am = matchRe.exec(lh.substring(pos));
+                    if (am) after = am[1];
+                    const a = before.length ? before[before.length - 1] : '';
+                    const b = after || '';
+                    const sur = n => (n.toLowerCase().replace(/[^a-z0-9\/ ]/g, '').split(/[\/ ]/).filter(Boolean).pop());
+                    const keyA = [sur(a), sur(b)].sort().join('|');
+                    const keyB = [sur(p1), sur(p2)].sort().join('|');
+                    if (t === tour && keyA === keyB) { detailUrl = url; break; }
+                }
+                if (!detailUrl) return;
+                const dr = await fetch(TENNISLIVE_PROXY + encodeURIComponent(detailUrl), { cache: 'no-store' });
+                if (!dr.ok) return;
+                const dh = await dr.text();
+                const pt = parseTennisLivePoint(dh);
+                if (!pt) return;
+                // remove any existing overlay
+                const existing = document.querySelector('.tennislive-points');
+                if (existing) existing.remove();
+                const block = buildLivePointBlock(pt);
+                const content = document.getElementById('terminal-content');
+                // insert after the first <pre class="term-art"> that contains the set table (the one with PLAYER header)
+                const pres = content.querySelectorAll('pre.term-art');
+                let inserted = false;
+                for (const p of pres) {
+                    if (/PLAYER/.test(p.textContent)) {
+                        p.insertAdjacentElement('afterend', block);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) content.appendChild(block);
+            } catch (e) {
+                // silent: point score is a best-effort enhancement
+            }
+        }
+
         // Initial fetch
-        fetchTerminalData();
+        fetchTerminalData().then(fetchTennisLivePoints);
         updatePolling();
+        // also refresh points on each poll tick
+        const _origFetch = fetchTerminalData;
+        fetchTerminalData = async function () {
+            await _origFetch();
+            fetchTennisLivePoints();
+        };
 
         // Handle navigation inside terminal via AJAX
         document.addEventListener('click', async (e) => {

@@ -3,7 +3,10 @@ package sports
 import (
 	"encoding/json"
 	"fmt"
+	"html"
+	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -36,6 +39,7 @@ func classFor(code string) string {
 	}
 	return ""
 }
+
 type TennisScoreboard struct {
 	Events []TennisEvent `json:"events"`
 }
@@ -107,9 +111,9 @@ type TennisCompetitor struct {
 	Winner     bool   `json:"winner"`
 	Possession bool   `json:"possession"`
 	Linescores []struct {
-		Value     float64 `json:"value"`
-		Winner    bool    `json:"winner"`
-		Tiebreak  float64 `json:"tiebreak,omitempty"`
+		Value    float64 `json:"value"`
+		Winner   bool    `json:"winner"`
+		Tiebreak float64 `json:"tiebreak,omitempty"`
 	} `json:"linescores"`
 	Athlete struct {
 		DisplayName string `json:"displayName"`
@@ -503,6 +507,234 @@ func findTennisCompetition(dateStr string, gamePk string) (*TennisCompetition, *
 	return nil, nil, "", fmt.Errorf("match %s not found on date %s", gamePk, dateStr)
 }
 
+// ---------------------------------------------------------------------------
+// TennisLive.net — point-by-point live scores
+//
+// ESPN's tennis feed only exposes set-level data (games won per set). To show
+// the live point score within the current game (0/15/30/40, server, break
+// points) we supplement it with TennisLive.net, which server-renders the full
+// point-by-point history on each match detail page. This is best-effort: the
+// ESPN set view is always shown even if this lookup fails or is unavailable.
+// ---------------------------------------------------------------------------
+
+type tennisLivePoint struct {
+	Found        bool
+	CurrentGame  string // e.g. "4-5"
+	CurrentPoint string // e.g. "40-40", "A-40"
+	Server       string
+	BreakPoint   bool
+}
+
+type tennisLiveDetailCacheEntry struct {
+	html      string
+	timestamp time.Time
+}
+
+var (
+	tennisLiveListingMu    sync.RWMutex
+	tennisLiveListingData  map[string]string
+	tennisLiveListingStamp time.Time
+
+	tennisLiveDetailMu    sync.Mutex
+	tennisLiveDetailCache = map[string]tennisLiveDetailCacheEntry{}
+)
+
+// tennisLiveSurnames returns the surname token(s) used for fuzzy matching.
+// Only the last word of each name (or slash-separated doubles partner) is
+// used so that "J. Kym" matches "Jerome Kym".
+func tennisLiveSurnames(name string) []string {
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '/' || r == ' ' || r == '.'
+	})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(p)
+		var b strings.Builder
+		for _, r := range p {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			}
+		}
+		if b.Len() > 0 {
+			out = append(out, b.String())
+		}
+	}
+	if len(out) == 0 {
+		return out
+	}
+	return []string{out[len(out)-1]}
+}
+
+// tennisLiveMatchKey builds an order-independent key from the two player names
+// plus the tour, so we can locate a match in the TennisLive listing.
+func tennisLiveMatchKey(tour, p1, p2 string) string {
+	s := append(tennisLiveSurnames(p1), tennisLiveSurnames(p2)...)
+	sort.Strings(s)
+	return strings.ToLower(tour) + ":" + strings.Join(s, "|")
+}
+
+// tennisLiveFetch fetches a URL, optionally caching the body for cacheFor.
+func tennisLiveFetch(url string, cacheFor time.Duration) (string, error) {
+	if cacheFor > 0 {
+		tennisLiveDetailMu.Lock()
+		if e, ok := tennisLiveDetailCache[url]; ok && time.Since(e.timestamp) < cacheFor {
+			h := e.html
+			tennisLiveDetailMu.Unlock()
+			return h, nil
+		}
+		tennisLiveDetailMu.Unlock()
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+	req.Header.Set("Cookie", "verified=1")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	h := string(body)
+	if cacheFor > 0 {
+		tennisLiveDetailMu.Lock()
+		tennisLiveDetailCache[url] = tennisLiveDetailCacheEntry{html: h, timestamp: time.Now()}
+		tennisLiveDetailMu.Unlock()
+	}
+	return h, nil
+}
+
+// fetchTennisLiveListing parses the TennisLive homepage (which lists all live
+// matches with player names and detail links) into a matchKey -> detailURL map.
+func fetchTennisLiveListing() (map[string]string, error) {
+	tennisLiveListingMu.RLock()
+	if tennisLiveListingData != nil && time.Since(tennisLiveListingStamp) < 60*time.Second {
+		d := tennisLiveListingData
+		tennisLiveListingMu.RUnlock()
+		return d, nil
+	}
+	tennisLiveListingMu.RUnlock()
+
+	htmlStr, err := tennisLiveFetch("https://www.tennislive.net/", 0)
+	if err != nil {
+		return nil, err
+	}
+
+	linkRe := regexp.MustCompile(`<a href="(https://www\.tennislive\.net/(atp|wta)/match/[^"]+)"[^>]*class="nu-reward"`)
+	matchRe := regexp.MustCompile(`class="match "><a href="https://www\.tennislive\.net/(?:atp|wta)/[^"]+"[^>]*>([^<]+)</a>`)
+
+	data := map[string]string{}
+	for _, l := range linkRe.FindAllStringSubmatch(htmlStr, -1) {
+		url := l[1]
+		tour := l[2]
+		pos := strings.Index(htmlStr, url)
+		if pos < 0 {
+			continue
+		}
+		before := matchRe.FindAllStringSubmatch(htmlStr[:pos], -1)
+		p1 := ""
+		if len(before) > 0 {
+			p1 = html.UnescapeString(strings.TrimSpace(before[len(before)-1][1]))
+		}
+		after := matchRe.FindStringSubmatch(htmlStr[pos:])
+		p2 := ""
+		if after != nil {
+			p2 = html.UnescapeString(strings.TrimSpace(after[1]))
+		}
+		if p1 == "" || p2 == "" {
+			continue
+		}
+		data[tennisLiveMatchKey(tour, p1, p2)] = url
+	}
+
+	tennisLiveListingMu.Lock()
+	tennisLiveListingData = data
+	tennisLiveListingStamp = time.Now()
+	tennisLiveListingMu.Unlock()
+	return data, nil
+}
+
+// parseTennisLivePoint extracts the current (most recent) game's point score,
+// server and break-point flag from a TennisLive match detail page. It never
+// panics: any unexpected input yields a zero (Found=false) value so a bad
+// scrape can never crash the server.
+func parseTennisLivePoint(htmlStr string) (res tennisLivePoint) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = tennisLivePoint{}
+		}
+	}()
+
+	re := regexp.MustCompile(`class="mp_info_txt">([^<]*)</td>.*?class="mp_15">([^<]*)</td>`)
+	locs := re.FindAllStringSubmatchIndex(htmlStr, -1)
+	if len(locs) == 0 {
+		return tennisLivePoint{}
+	}
+	last := locs[len(locs)-1]
+	gameScore := strings.TrimSpace(html.UnescapeString(htmlStr[last[2]:last[3]]))
+	prog := strings.TrimSpace(html.UnescapeString(htmlStr[last[4]:last[5]]))
+	tokens := strings.Split(prog, ",")
+	if len(tokens) == 0 {
+		return tennisLivePoint{}
+	}
+	cur := strings.TrimSpace(tokens[len(tokens)-1])
+	bp := strings.Contains(cur, "[BP]")
+	cur = strings.ReplaceAll(cur, "[BP]", "")
+	cur = strings.TrimSpace(cur)
+
+	infoStart := last[2]
+	trStart := strings.LastIndex(htmlStr[:infoStart], "<tr")
+	rowEnd := strings.Index(htmlStr[infoStart:], "</tr>")
+	server := ""
+	if trStart >= 0 && rowEnd >= 0 && trStart < infoStart+rowEnd {
+		row := htmlStr[trStart : infoStart+rowEnd]
+		serveRe := regexp.MustCompile(`class="mp_serve">([^<]*?)(<img[^>]*>)?</td>`)
+		for _, s := range serveRe.FindAllStringSubmatch(row, -1) {
+			name := strings.TrimSpace(html.UnescapeString(s[1]))
+			if s[2] != "" {
+				server = name
+			}
+		}
+	}
+
+	return tennisLivePoint{
+		Found:        true,
+		CurrentGame:  gameScore,
+		CurrentPoint: cur,
+		Server:       server,
+		BreakPoint:   bp,
+	}
+}
+
+// getTennisLivePoint looks up a match by player names and returns its live
+// point score, or a zero (Found=false) value if it cannot be resolved. It never
+// panics, so a failed TennisLive lookup degrades gracefully to the ESPN view.
+func getTennisLivePoint(tour, p1, p2 string) (res tennisLivePoint) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = tennisLivePoint{}
+		}
+	}()
+	listing, err := fetchTennisLiveListing()
+	if err != nil {
+		return tennisLivePoint{}
+	}
+	url, ok := listing[tennisLiveMatchKey(tour, p1, p2)]
+	if !ok {
+		return tennisLivePoint{}
+	}
+	h, err := tennisLiveFetch(url, 12*time.Second)
+	if err != nil {
+		return tennisLivePoint{}
+	}
+	return parseTennisLivePoint(h)
+}
+
 func renderTennisGame(comp TennisCompetition, event TennisEvent, tour string, dateStr string, format string) string {
 	var sb strings.Builder
 
@@ -678,6 +910,38 @@ func renderTennisGame(comp TennisCompetition, event TennisEvent, tour string, da
 
 	sb.WriteString(st.Render())
 	sb.WriteString("\n")
+
+	// Live point-by-point score (supplements ESPN's set-only data)
+	if state == "in" {
+		pt := getTennisLivePoint(tour, awayName, homeName)
+		if pt.Found {
+			pointDisplay := pt.CurrentPoint
+			switch pt.CurrentPoint {
+			case "40-40":
+				pointDisplay = "40-40 (Deuce)"
+			case "A-40":
+				pointDisplay = "Ad (Server)"
+			case "40-A":
+				pointDisplay = "Ad (Returner)"
+			}
+			bp := ""
+			if pt.BreakPoint {
+				bp = "  [BREAK POINT]"
+			}
+
+			var b strings.Builder
+			b.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+			b.WriteString(style(" LIVE GAME SCORE  (point-by-point · TennisLive)\n", ansiBold+ansiYellow, format))
+			b.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+			b.WriteString(" " + style("CURRENT GAME", ansiYellow, format) + ": " + style(pt.CurrentGame, ansiGreen, format) + "\n")
+			b.WriteString(" " + style("POINTS", ansiYellow, format) + ": " + style(pointDisplay+bp, ansiGreen, format) + "\n")
+			if pt.Server != "" {
+				b.WriteString(" " + style("SERVER", ansiYellow, format) + ": " + style("★ "+pt.Server, ansiGreen, format) + "\n")
+			}
+			b.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+			sb.WriteString(termPre(format, b.String()))
+		}
+	}
 
 	if format == "ansi" {
 		sb.WriteString(txt(fmt.Sprintf(" Run 'curl http://localhost:9090/tennis?date=%s' to return to the scoreboard.\n", dateStr), format))
