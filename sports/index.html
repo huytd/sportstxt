@@ -312,6 +312,7 @@
             <a href="/mlb/compare" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Compare Teams</a>
             <a href="/mlb/team/130" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Teams</a>
             <a href="/nba" class="term-link" style="padding: 6px 14px; border-radius: 4px;">NBA</a>
+            <a href="/basketball" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Basketball</a>
             <a href="/tennis" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Tennis</a>
         </nav>
 
@@ -329,15 +330,17 @@
             const timeStr = now.toTimeString().split(' ')[0];
             const isGamePage = window.location.pathname.startsWith('/game/');
             const isNBAGamePage = window.location.pathname.startsWith('/nba/game/');
+            const isBasketballGamePage = window.location.pathname.startsWith('/basketball/game/');
             const isTennisGamePage = window.location.pathname.startsWith('/tennis/game/');
 
             const leftEl = document.getElementById('status-left');
             const rightEl = document.getElementById('status-right');
 
-            if (isGamePage || isNBAGamePage || isTennisGamePage) {
+            if (isGamePage || isNBAGamePage || isBasketballGamePage || isTennisGamePage) {
                 if (!leftEl.querySelector('a')) {
                     let backUrl = '/';
                     if (isNBAGamePage) backUrl = '/nba';
+                    else if (isBasketballGamePage) backUrl = '/basketball';
                     else if (isTennisGamePage) backUrl = '/tennis';
                     leftEl.innerHTML = '<a href="' + backUrl + '" class="term-link">&lt;&lt; BACK TO SCOREBOARD</a>';
                 }

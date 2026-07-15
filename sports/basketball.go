@@ -8,42 +8,66 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
 
-// ESPNBAScoreboard represents the response from ESPN NBA scoreboard API
+// basketballLeague identifies a basketball tour supported by ESPN.
+type basketballLeague struct {
+	Slug string // ESPN sport slug, e.g. "nba", "wnba"
+	Name string // Display label, e.g. "NBA"
+}
+
+// basketballLeagues lists every basketball tour we aggregate.
+var basketballLeagues = []basketballLeague{
+	{"nba", "NBA"},
+	{"wnba", "WNBA"},
+	{"mens-college-basketball", "NCAA M"},
+	{"womens-college-basketball", "NCAA W"},
+}
+
+// basketballScheduleEntry is one league's scoreboard for the combined view.
+type basketballScheduleEntry struct {
+	League basketballLeague
+	Sched  ESPNBAScoreboard
+}
+
+// ESPNBAEvent represents a single game within a basketball scoreboard.
+type ESPNBAEvent struct {
+	ID        string `json:"id"`
+	Date      string `json:"date"`
+	Name      string `json:"name"`
+	ShortName string `json:"shortName"`
+	Status    struct {
+		Clock        float64 `json:"clock"`
+		DisplayClock string  `json:"displayClock"`
+		Period       int     `json:"period"`
+		Type         struct {
+			State       string `json:"state"`
+			Detail      string `json:"detail"`
+			Description string `json:"description"`
+		} `json:"type"`
+	} `json:"status"`
+	Competitions []struct {
+		Competitors []struct {
+			HomeAway string `json:"homeAway"`
+			Score    string `json:"score"`
+			Team     struct {
+				ID           string `json:"id"`
+				DisplayName  string `json:"displayName"`
+				Abbreviation string `json:"abbreviation"`
+			} `json:"team"`
+			Linescores []struct {
+				DisplayValue string `json:"displayValue"`
+			} `json:"linescores"`
+		} `json:"competitors"`
+	} `json:"competitions"`
+}
+
+// ESPNBAScoreboard represents the response from ESPN basketball scoreboard API
 type ESPNBAScoreboard struct {
-	Events []struct {
-		ID        string `json:"id"`
-		Date      string `json:"date"`
-		Name      string `json:"name"`
-		ShortName string `json:"shortName"`
-		Status    struct {
-			Clock        float64 `json:"clock"`
-			DisplayClock string  `json:"displayClock"`
-			Period       int     `json:"period"`
-			Type         struct {
-				State       string `json:"state"`
-				Detail      string `json:"detail"`
-				Description string `json:"description"`
-			} `json:"type"`
-		} `json:"status"`
-		Competitions []struct {
-			Competitors []struct {
-				HomeAway string `json:"homeAway"`
-				Score    string `json:"score"`
-				Team     struct {
-					ID           string `json:"id"`
-					DisplayName  string `json:"displayName"`
-					Abbreviation string `json:"abbreviation"`
-				} `json:"team"`
-				Linescores []struct {
-					DisplayValue string `json:"displayValue"`
-				} `json:"linescores"`
-			} `json:"competitors"`
-		} `json:"competitions"`
-	} `json:"events"`
+	Events []ESPNBAEvent `json:"events"`
 }
 
 // ESPNBAPlayerStats represents individual player statistics in boxscore
@@ -161,12 +185,21 @@ type ESPNBAGameSummary struct {
 	} `json:"boxscore"`
 }
 
-// renderNBASchedule creates the plain-text scoreboard view for NBA
-func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, loc *time.Location) string {
+// renderBasketballSchedule creates the plain-text scoreboard view for one or
+// more basketball leagues. When more than one entry is supplied the view is a
+// combined "all basketball" board with a LEAGUE column.
+func renderBasketballSchedule(entries []basketballScheduleEntry, dateStr string, format string, loc *time.Location) string {
 	var sb strings.Builder
 
+	combined := len(entries) > 1
+
 	zoneName, _ := time.Now().In(loc).Zone()
-	title := fmt.Sprintf("NBA LIVE SCOREBOARD (%s %s)", dateStr, zoneName)
+	var title string
+	if combined {
+		title = fmt.Sprintf("BASKETBALL LIVE SCOREBOARD (%s %s)", dateStr, zoneName)
+	} else {
+		title = fmt.Sprintf("%s LIVE SCOREBOARD (%s %s)", entries[0].League.Name, dateStr, zoneName)
+	}
 	padding := (layoutWidth - len(title)) / 2
 	if padding < 0 {
 		padding = 0
@@ -179,10 +212,21 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	prevDateStr := currentDate.AddDate(0, 0, -1).Format("2006-01-02")
 	nextDateStr := currentDate.AddDate(0, 0, 1).Format("2006-01-02")
 
+	var basePath string
+	if combined {
+		basePath = "/basketball"
+	} else {
+		basePath = "/nba"
+	}
+
 	var banner strings.Builder
 	if format != "html" {
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
-		banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
+		if combined {
+			banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[BASKETBALL]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
+		} else {
+			banner.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
+		}
 		banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	banner.WriteString(txt(strings.Repeat(" ", padding), format))
@@ -198,8 +242,8 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		spacerSize = 1
 	}
 	if format == "html" {
-		prevLink := fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">%s</a>`, prevDateStr, prevLinkText)
-		nextLink := fmt.Sprintf(`<a href="/nba?date=%s" class="term-link">%s</a>`, nextDateStr, nextLinkText)
+		prevLink := fmt.Sprintf(`<a href="%s?date=%s" class="term-link">%s</a>`, basePath, prevDateStr, prevLinkText)
+		nextLink := fmt.Sprintf(`<a href="%s?date=%s" class="term-link">%s</a>`, basePath, nextDateStr, nextLinkText)
 		banner.WriteString(prevLink + strings.Repeat(" ", spacerSize) + nextLink + "\n")
 	} else {
 		banner.WriteString(style(prevLinkText, ansiGreen, format) + strings.Repeat(" ", spacerSize) + style(nextLinkText, ansiGreen, format) + "\n")
@@ -207,13 +251,31 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	banner.WriteString(style("==============================================================================\n", ansiCyan, format))
 	sb.WriteString(termPre(format, banner.String()))
 
-	if len(sched.Events) == 0 {
+	totalEvents := 0
+	for _, e := range entries {
+		totalEvents += len(e.Sched.Events)
+	}
+	if totalEvents == 0 {
 		sb.WriteString(termPre(format, txt(" No games scheduled for this date.\n", format)+
 			style("==============================================================================\n", ansiCyan, format)))
 		return sb.String()
 	}
 
-	sort.SliceStable(sched.Events, func(i, j int) bool {
+	// Flatten events across leagues for sorting/rendering.
+	var events []struct {
+		league basketballLeague
+		event  ESPNBAEvent
+	}
+	for _, e := range entries {
+		for i := range e.Sched.Events {
+			events = append(events, struct {
+				league basketballLeague
+				event  ESPNBAEvent
+			}{e.League, e.Sched.Events[i]})
+		}
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
 		parseTime := func(s string) time.Time {
 			if t, err := time.Parse(time.RFC3339, s); err == nil {
 				return t
@@ -223,15 +285,19 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			}
 			return time.Time{}
 		}
-		t1 := parseTime(sched.Events[i].Date)
-		t2 := parseTime(sched.Events[j].Date)
+		t1 := parseTime(events[i].event.Date)
+		t2 := parseTime(events[j].event.Date)
 		if !t1.IsZero() && !t2.IsZero() {
 			return t1.Before(t2)
 		}
-		return sched.Events[i].Date < sched.Events[j].Date
+		return events[i].event.Date < events[j].event.Date
 	})
 
-	t := NewTable(format,
+	cols := []TableCol{}
+	if combined {
+		cols = append(cols, TableCol{Title: "LEAGUE", Width: 9})
+	}
+	cols = append(cols,
 		TableCol{Title: "ID", Width: 9},
 		TableCol{Title: "TIME", Width: 8},
 		TableCol{Title: "AWAY TEAM", Width: 17},
@@ -240,6 +306,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		TableCol{Title: "HOME TEAM", Width: 17},
 		TableCol{Title: "STATUS", Width: 10},
 	)
+	t := NewTable(format, cols...)
 
 	classFor := func(code string) string {
 		switch code {
@@ -255,7 +322,8 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 		return ""
 	}
 
-	for _, event := range sched.Events {
+	for _, ev := range events {
+		event := ev.event
 		idStr := event.ID
 		var homeComp, awayComp struct {
 			HomeAway string `json:"homeAway"`
@@ -345,8 +413,16 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			gameTime = t.In(loc).Format("03:04 PM")
 		}
 
-		t.AddRow(
-			TableCell{Text: idStr, Link: "/nba/game/" + idStr},
+		row := []TableCell{}
+		if combined {
+			row = append(row, TableCell{Text: ev.league.Name, Class: classFor(baseStyle), ANSI: baseStyle})
+		}
+		gameLink := "/nba/game/" + idStr
+		if combined {
+			gameLink = "/basketball/game/" + idStr + "?league=" + ev.league.Slug
+		}
+		row = append(row,
+			TableCell{Text: idStr, Link: gameLink},
 			TableCell{Text: gameTime, Class: classFor(baseStyle), ANSI: baseStyle},
 			TableCell{Text: awayName, Class: classFor(awayStyle), ANSI: awayStyle},
 			TableCell{Text: awayScoreStr, Align: alignRight, Class: classFor(awayStyle), ANSI: awayStyle},
@@ -354,6 +430,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 			TableCell{Text: homeName, Class: classFor(homeStyle), ANSI: homeStyle},
 			TableCell{Text: statusStr, Class: classFor(baseStyle), ANSI: baseStyle},
 		)
+		t.AddRow(row...)
 	}
 
 	sb.WriteString(t.Render())
@@ -361,7 +438,11 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	var footer strings.Builder
 	footer.WriteString(style("------------------------------------------------------------------------------\n", ansiCyan, format))
 	if format == "ansi" {
-		footer.WriteString(txt(" Run 'curl http://localhost:9090/nba/game/<ID>' to view a game in real-time.\n", format))
+		linkPath := "/nba/game/<ID>"
+		if combined {
+			linkPath = "/basketball/game/<ID>?league=<LEAGUE>"
+		}
+		footer.WriteString(txt(fmt.Sprintf(" Run 'curl http://localhost:9090%s' to view a game in real-time.\n", linkPath), format))
 	} else {
 		footer.WriteString(txt(" Click on a game ID to view the game in real-time.\n", format))
 	}
@@ -482,7 +563,7 @@ func renderNBABoxscore(teamEntry ESPNBABoxscoreTeam, format string) string {
 }
 
 // renderNBAGame creates the detailed view of a game
-func renderNBAGame(summary ESPNBAGameSummary, format string) string {
+func renderNBAGame(summary ESPNBAGameSummary, leagueLabel string, format string) string {
 	var sb strings.Builder
 
 	if len(summary.Header.Competitions) == 0 {
@@ -553,6 +634,9 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 	subTitleLine := fmt.Sprintf(" %s @ %s\n", awayName, homeName)
 	if seriesStr != "" {
 		subTitleLine = fmt.Sprintf(" %s @ %s (%s)\n", awayName, homeName, seriesStr)
+	}
+	if leagueLabel != "" {
+		subTitleLine = subTitleLine + fmt.Sprintf(" League: %s\n", leagueLabel)
 	}
 
 	var header strings.Builder
@@ -629,11 +713,6 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 	}
 
 	if hasTeamStats {
-		var ts strings.Builder
-		ts.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
-		ts.WriteString(style(" TEAM STATS:\n", ansiBold+ansiCyan, format))
-		ts.WriteString(style("      PTS      FG    3PT     FT OR/DR/TR   A   S   B\n", ansiBold, format))
-
 		getStatVal := func(ts ESPNBABoxscoreTeamStats, name string) string {
 			for _, s := range ts.Statistics {
 				if s.Name == name || s.Label == name {
@@ -643,64 +722,93 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 			return "-"
 		}
 
-		awayFG := getStatVal(awayTeamStats, "fieldGoalsMade-fieldGoalsAttempted")
-		awayFGP := getStatVal(awayTeamStats, "fieldGoalPct")
-		away3PT := getStatVal(awayTeamStats, "threePointFieldGoalsMade-threePointFieldGoalsAttempted")
-		away3PTP := getStatVal(awayTeamStats, "threePointFieldGoalPct")
-		awayFT := getStatVal(awayTeamStats, "freeThrowsMade-freeThrowsAttempted")
-		awayFTP := getStatVal(awayTeamStats, "freeThrowPct")
-		awayOR := getStatVal(awayTeamStats, "offensiveRebounds")
-		awayDR := getStatVal(awayTeamStats, "defensiveRebounds")
-		awayTR := getStatVal(awayTeamStats, "totalRebounds")
-		awayA := getStatVal(awayTeamStats, "assists")
-		awayS := getStatVal(awayTeamStats, "steals")
-		awayB := getStatVal(awayTeamStats, "blocks")
+		// Team stats counts table
+		ct := NewTable(format,
+			TableCol{Title: "TEAM", Width: 10},
+			TableCol{Title: "PTS", Width: 3, Align: alignRight},
+			TableCol{Title: "FG", Width: 7, Align: alignRight},
+			TableCol{Title: "3PT", Width: 6, Align: alignRight},
+			TableCol{Title: "FT", Width: 6, Align: alignRight},
+			TableCol{Title: "ORB", Width: 3, Align: alignRight},
+			TableCol{Title: "DRB", Width: 3, Align: alignRight},
+			TableCol{Title: "TRB", Width: 3, Align: alignRight},
+			TableCol{Title: "AST", Width: 3, Align: alignRight},
+			TableCol{Title: "STL", Width: 3, Align: alignRight},
+			TableCol{Title: "BLK", Width: 3, Align: alignRight},
+		)
+		ct.SetCaption("TEAM STATS")
+		ct.AddRow(
+			TableCell{Text: awayAbb},
+			TableCell{Text: awayScoreVal, Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "fieldGoalsMade-fieldGoalsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "threePointFieldGoalsMade-threePointFieldGoalsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "freeThrowsMade-freeThrowsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "offensiveRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "defensiveRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "totalRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "assists"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "steals"), Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "blocks"), Align: alignRight},
+		)
+		ct.AddRow(
+			TableCell{Text: homeAbb},
+			TableCell{Text: homeScoreVal, Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "fieldGoalsMade-fieldGoalsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "threePointFieldGoalsMade-threePointFieldGoalsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "freeThrowsMade-freeThrowsAttempted"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "offensiveRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "defensiveRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "totalRebounds"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "assists"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "steals"), Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "blocks"), Align: alignRight},
+		)
+		sb.WriteString(ct.Render())
+		sb.WriteString("\n")
 
-		ts.WriteString(txt(fmt.Sprintf(" %-4s %3s %7s %6s %6s %2s/%2s/%2s %3s %3s %3s\n",
-			awayAbb, awayScoreVal, awayFG, away3PT, awayFT, awayOR, awayDR, awayTR, awayA, awayS, awayB,
-		), format))
-		ts.WriteString(txt(fmt.Sprintf("          %-7s %-6s %-6s\n",
-			awayFGP+"%", away3PTP+"%", awayFTP+"%",
-		), format))
-
-		homeFG := getStatVal(homeTeamStats, "fieldGoalsMade-fieldGoalsAttempted")
-		homeFGP := getStatVal(homeTeamStats, "fieldGoalPct")
-		home3PT := getStatVal(homeTeamStats, "threePointFieldGoalsMade-threePointFieldGoalsAttempted")
-		home3PTP := getStatVal(homeTeamStats, "threePointFieldGoalPct")
-		homeFT := getStatVal(homeTeamStats, "freeThrowsMade-freeThrowsAttempted")
-		homeFTP := getStatVal(homeTeamStats, "freeThrowPct")
-		homeOR := getStatVal(homeTeamStats, "offensiveRebounds")
-		homeDR := getStatVal(homeTeamStats, "defensiveRebounds")
-		homeTR := getStatVal(homeTeamStats, "totalRebounds")
-		homeA := getStatVal(homeTeamStats, "assists")
-		homeS := getStatVal(homeTeamStats, "steals")
-		homeB := getStatVal(homeTeamStats, "blocks")
-
-		ts.WriteString(txt(fmt.Sprintf(" %-4s %3s %7s %6s %6s %2s/%2s/%2s %3s %3s %3s\n",
-			homeAbb, homeScoreVal, homeFG, home3PT, homeFT, homeOR, homeDR, homeTR, homeA, homeS, homeB,
-		), format))
-		ts.WriteString(txt(fmt.Sprintf("          %-7s %-6s %-6s\n",
-			homeFGP+"%", home3PTP+"%", homeFTP+"%",
-		), format))
+		// Shooting percentages table
+		pt := NewTable(format,
+			TableCol{Title: "TEAM", Width: 10},
+			TableCol{Title: "FG%", Width: 6, Align: alignRight},
+			TableCol{Title: "3P%", Width: 6, Align: alignRight},
+			TableCol{Title: "FT%", Width: 6, Align: alignRight},
+		)
+		pt.SetCaption("SHOOTING %")
+		pt.AddRow(
+			TableCell{Text: awayAbb},
+			TableCell{Text: getStatVal(awayTeamStats, "fieldGoalPct") + "%", Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "threePointFieldGoalPct") + "%", Align: alignRight},
+			TableCell{Text: getStatVal(awayTeamStats, "freeThrowPct") + "%", Align: alignRight},
+		)
+		pt.AddRow(
+			TableCell{Text: homeAbb},
+			TableCell{Text: getStatVal(homeTeamStats, "fieldGoalPct") + "%", Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "threePointFieldGoalPct") + "%", Align: alignRight},
+			TableCell{Text: getStatVal(homeTeamStats, "freeThrowPct") + "%", Align: alignRight},
+		)
+		sb.WriteString(pt.Render())
+		sb.WriteString("\n")
 
 		leadChanges := getStatVal(awayTeamStats, "leadChanges")
 		awayLL := getStatVal(awayTeamStats, "largestLead")
 		homeLL := getStatVal(homeTeamStats, "largestLead")
 
-		ts.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
-		ts.WriteString(txt(fmt.Sprintf(" Lead Changes: %s\n", leadChanges), format))
-		ts.WriteString(txt(fmt.Sprintf(" Biggest Lead: %s %s, %s %s\n", awayAbb, awayLL, homeAbb, homeLL), format))
-		sb.WriteString(termPre(format, ts.String()))
+		var extra strings.Builder
+		extra.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
+		extra.WriteString(txt(fmt.Sprintf(" Lead Changes: %s\n", leadChanges), format))
+		extra.WriteString(txt(fmt.Sprintf(" Biggest Lead: %s %s, %s %s\n", awayAbb, awayLL, homeAbb, homeLL), format))
+		sb.WriteString(termPre(format, extra.String()))
 	}
 
 	// Leaders section
-	var awayLeadersStr, homeLeadersStr string
-
+	type teamLeader struct {
+		ptsName, ptsVal string
+		astName, astVal string
+		rebName, rebVal string
+	}
+	leaderMap := map[string]*teamLeader{}
 	for _, tl := range summary.Leaders {
-		var ptsName, ptsVal string
-		var astName, astVal string
-		var rebName, rebVal string
-
+		l := &teamLeader{}
 		for _, cat := range tl.Leaders {
 			if len(cat.Leaders) > 0 {
 				leaderAthlete := cat.Leaders[0]
@@ -709,41 +817,51 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 
 				switch cat.Name {
 				case "points":
-					ptsName = name
-					ptsVal = val
+					l.ptsName, l.ptsVal = name, val
 				case "assists":
-					astName = name
-					astVal = val
+					l.astName, l.astVal = name, val
 				case "rebounds":
-					rebName = name
-					rebVal = val
+					l.rebName, l.rebVal = name, val
 				}
 			}
 		}
+		leaderMap[tl.Team.ID] = l
+	}
 
-		leaderStr := fmt.Sprintf("%s (%s PTS), %s (%s AST), %s (%s REB)",
-			ptsName, ptsVal, astName, astVal, rebName, rebVal,
+	awayL := leaderMap[awayComp.Team.ID]
+	homeL := leaderMap[homeComp.Team.ID]
+
+	if awayL != nil || homeL != nil {
+		lt := NewTable(format,
+			TableCol{Title: "TEAM", Width: 10},
+			TableCol{Title: "POINTS", Width: 24},
+			TableCol{Title: "ASSISTS", Width: 24},
+			TableCol{Title: "REBOUNDS", Width: 24},
 		)
+		lt.SetCaption("TEAM LEADERS")
 
-		if tl.Team.ID == awayComp.Team.ID {
-			awayLeadersStr = leaderStr
-		} else if tl.Team.ID == homeComp.Team.ID {
-			homeLeadersStr = leaderStr
+		leaderCell := func(l *teamLeader, name, val string) TableCell {
+			if l == nil || name == "" {
+				return TableCell{Text: "-"}
+			}
+			return TableCell{Text: fmt.Sprintf("%s (%s)", name, val)}
 		}
-	}
 
-	var leaders strings.Builder
-	if awayLeadersStr != "" || homeLeadersStr != "" {
-		leaders.WriteString(style("------------------------------------------------------------------------\n", ansiCyan, format))
-		leaders.WriteString(style(" TEAM LEADERS:\n", ansiBold+ansiCyan, format))
-		if awayLeadersStr != "" {
-			leaders.WriteString(txt(fmt.Sprintf("  %s: %s\n", awayAbb, awayLeadersStr), format))
-		}
-		if homeLeadersStr != "" {
-			leaders.WriteString(txt(fmt.Sprintf("  %s: %s\n", homeAbb, homeLeadersStr), format))
-		}
+		lt.AddRow(
+			TableCell{Text: awayAbb},
+			leaderCell(awayL, awayL.ptsName, awayL.ptsVal),
+			leaderCell(awayL, awayL.astName, awayL.astVal),
+			leaderCell(awayL, awayL.rebName, awayL.rebVal),
+		)
+		lt.AddRow(
+			TableCell{Text: homeAbb},
+			leaderCell(homeL, homeL.ptsName, homeL.ptsVal),
+			leaderCell(homeL, homeL.astName, homeL.astVal),
+			leaderCell(homeL, homeL.rebName, homeL.rebVal),
+		)
+		sb.WriteString(lt.Render())
+		sb.WriteString("\n")
 	}
-	sb.WriteString(termPre(format, leaders.String()))
 
 	// Recent plays section
 	var playBlock strings.Builder
@@ -822,6 +940,41 @@ func renderNBAGame(summary ESPNBAGameSummary, format string) string {
 	return sb.String()
 }
 
+func fetchBasketballScoreboard(slug string, dateStr string) (*ESPNBAScoreboard, error) {
+	espnDate := strings.ReplaceAll(dateStr, "-", "")
+	url := fmt.Sprintf("https://site.api.espn.com/apis/site/v2/sports/basketball/%s/scoreboard?dates=%s", slug, espnDate)
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ESPN API returned status code %d", resp.StatusCode)
+	}
+
+	var sched ESPNBAScoreboard
+	if err := json.NewDecoder(resp.Body).Decode(&sched); err != nil {
+		return nil, err
+	}
+	return &sched, nil
+}
+
+func resolveBasketballLeague(dateStr string, gamePk string) (basketballLeague, bool) {
+	for _, lg := range basketballLeagues {
+		sched, err := fetchBasketballScoreboard(lg.Slug, dateStr)
+		if err != nil {
+			continue
+		}
+		for _, ev := range sched.Events {
+			if ev.ID == gamePk {
+				return lg, true
+			}
+		}
+	}
+	return basketballLeague{}, false
+}
+
 func handleNBASchedule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -867,7 +1020,56 @@ func handleNBASchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	format := getFormat(r)
-	text := renderNBASchedule(sched, dateStr, format, loc)
+	text := renderBasketballSchedule([]basketballScheduleEntry{{basketballLeagues[0], sched}}, dateStr, format, loc)
+	writeResponse(w, format, text)
+}
+
+// handleBasketballSchedule shows every basketball league on one board.
+func handleBasketballSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
+		return
+	}
+
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().In(loc).Format("2006-01-02")
+	}
+
+	var wg sync.WaitGroup
+	results := make([]basketballScheduleEntry, len(basketballLeagues))
+	errs := make([]error, len(basketballLeagues))
+
+	for i, lg := range basketballLeagues {
+		wg.Add(1)
+		go func(i int, lg basketballLeague) {
+			defer wg.Done()
+			sched, e := fetchBasketballScoreboard(lg.Slug, dateStr)
+			if e != nil {
+				errs[i] = e
+				results[i] = basketballScheduleEntry{League: lg, Sched: ESPNBAScoreboard{}}
+				return
+			}
+			results[i] = basketballScheduleEntry{League: lg, Sched: *sched}
+		}(i, lg)
+	}
+	wg.Wait()
+
+	format := getFormat(r)
+	text := renderBasketballSchedule(results, dateStr, format, loc)
 	writeResponse(w, format, text)
 }
 
@@ -914,7 +1116,101 @@ func handleNBAGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text := renderNBAGame(summary, format)
+	text := renderNBAGame(summary, "NBA", format)
+	writeResponse(w, format, text)
+}
+
+// handleBasketballGame shows a single game from any league. The league is taken
+// from the ?league= query param when present, otherwise it is resolved by
+// searching every league's scoreboard for the event ID.
+func handleBasketballGame(w http.ResponseWriter, r *http.Request) {
+	gamePk := r.PathValue("gamePk")
+	if gamePk == "" {
+		http.Error(w, "Missing game ID", http.StatusBadRequest)
+		return
+	}
+
+	if serveHTMLWrapper(w, r) {
+		return
+	}
+
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().In(loc).Format("2006-01-02")
+	}
+
+	leagueSlug := r.URL.Query().Get("league")
+	format := getFormat(r)
+
+	var lg basketballLeague
+	found := false
+	if leagueSlug != "" {
+		for _, l := range basketballLeagues {
+			if l.Slug == leagueSlug {
+				lg = l
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		lg, found = resolveBasketballLeague(dateStr, gamePk)
+	}
+
+	if !found {
+		var sb strings.Builder
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		sb.WriteString(style(fmt.Sprintf("                       ERROR: GAME NOT FOUND (%s)\n", gamePk), ansiBold+ansiRed, format))
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		sb.WriteString(txt(" Details: The requested game ID was not found in any basketball league.\n", format))
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		if format == "ansi" {
+			sb.WriteString(txt(" Run 'curl http://localhost:9090/basketball' to return to the scoreboard.\n", format))
+			sb.WriteString(style("========================================================================\n", ansiRed, format))
+		}
+		writeResponse(w, format, sb.String())
+		return
+	}
+
+	url := fmt.Sprintf("https://site.api.espn.com/apis/site/v2/sports/basketball/%s/summary?event=%s", lg.Slug, gamePk)
+	resp, err := client.Get(url)
+	if err != nil {
+		http.Error(w, "Failed to connect to ESPN API: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var sb strings.Builder
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		sb.WriteString(style(fmt.Sprintf("                       ERROR: GAME NOT FOUND (%s)\n", gamePk), ansiBold+ansiRed, format))
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		sb.WriteString(txt(" Details: The requested game ID is invalid or not yet available.\n", format))
+		sb.WriteString(style("========================================================================\n", ansiRed, format))
+		if format == "ansi" {
+			sb.WriteString(txt(" Run 'curl http://localhost:9090/basketball' to return to the scoreboard.\n", format))
+			sb.WriteString(style("========================================================================\n", ansiRed, format))
+		}
+		writeResponse(w, format, sb.String())
+		return
+	}
+
+	var summary ESPNBAGameSummary
+	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+		http.Error(w, "Failed to decode game summary JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	text := renderNBAGame(summary, lg.Name, format)
 	writeResponse(w, format, text)
 }
 
@@ -955,6 +1251,94 @@ func handleAPINBAGameDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	url := fmt.Sprintf("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=%s", gamePk)
+	resp, err := client.Get(url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handleAPIBasketballGames returns every league's scoreboard merged into one JSON object.
+func handleAPIBasketballGames(w http.ResponseWriter, r *http.Request) {
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().In(loc).Format("2006-01-02")
+	}
+
+	var wg sync.WaitGroup
+	results := make(map[string]*ESPNBAScoreboard, len(basketballLeagues))
+	for _, lg := range basketballLeagues {
+		wg.Add(1)
+		go func(lg basketballLeague) {
+			defer wg.Done()
+			sched, e := fetchBasketballScoreboard(lg.Slug, dateStr)
+			if e == nil {
+				results[lg.Slug] = sched
+			}
+		}(lg)
+	}
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(results)
+}
+
+func handleAPIBasketballGameDetail(w http.ResponseWriter, r *http.Request) {
+	gamePk := r.PathValue("gamePk")
+	if gamePk == "" {
+		http.Error(w, "Missing game ID", http.StatusBadRequest)
+		return
+	}
+
+	tzStr := r.URL.Query().Get("tz")
+	if tzStr == "" {
+		tzStr = "America/Los_Angeles"
+	}
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc, _ = time.LoadLocation("America/Los_Angeles")
+	}
+
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().In(loc).Format("2006-01-02")
+	}
+
+	leagueSlug := r.URL.Query().Get("league")
+	var lg basketballLeague
+	found := false
+	if leagueSlug != "" {
+		for _, l := range basketballLeagues {
+			if l.Slug == leagueSlug {
+				lg = l
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		lg, found = resolveBasketballLeague(dateStr, gamePk)
+	}
+	if !found {
+		http.Error(w, "Game not found in any basketball league", http.StatusNotFound)
+		return
+	}
+
+	url := fmt.Sprintf("https://site.api.espn.com/apis/site/v2/sports/basketball/%s/summary?event=%s", lg.Slug, gamePk)
 	resp, err := client.Get(url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
