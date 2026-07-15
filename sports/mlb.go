@@ -442,7 +442,7 @@ func renderSchedule(sched ScheduleResponse, dateStr string, format string, loc *
 
 	if format != "html" {
 		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
-		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + "\n")
+		sb.WriteString(txt("           ", format) + style("[MLB]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[NBA]", ansiGray, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
 		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))

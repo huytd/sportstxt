@@ -178,6 +178,12 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /api/nba/games", handleAPINBAGames)
 	mux.HandleFunc("GET /api/nba/game/{gamePk}", handleAPINBAGameDetail)
 
+	// Tennis Routes
+	mux.HandleFunc("GET /tennis", handleTennisSchedule)
+	mux.HandleFunc("GET /tennis/game/{gamePk}", handleTennisGame)
+	mux.HandleFunc("GET /api/tennis/games", handleAPITennisGames)
+	mux.HandleFunc("GET /api/tennis/game/{gamePk}", handleAPITennisGameDetail)
+
 	return mux
 }
 

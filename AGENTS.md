@@ -12,7 +12,8 @@ A Go-based scoreboard application that displays MLB/NBA game data in both termin
 ├── sports/
 │   ├── sports.go        # Shared handlers, HTML template, common functions
 │   ├── mlb.go           # MLB-specific rendering and handlers
-│   └── nba.go           # NBA-specific rendering and handlers
+│   ├── nba.go           # NBA-specific rendering and handlers
+│   └── tennis.go        # Tennis-specific rendering and handlers (ATP and WTA)
 ├── sportstxt            # Compiled binary
 └── vercel.json          # Deployment config
 ```
@@ -45,6 +46,15 @@ A Go-based scoreboard application that displays MLB/NBA game data in both termin
 - **NBA Game Rendering**: Similar structure to MLB but for basketball
 - **Handlers**: `handleNBASchedule()`, `handleNBAGame()`
 
+### sports/tennis.go
+- **Tennis Scoreboard & Game Rendering**: Merged ATP/WTA tournament list and detailed match-level set boxscore
+- **Handlers**: `handleTennisSchedule()`, `handleTennisGame()`
+- **Helper Functions**:
+  - `fetchTennisScoreboard()` - Connects to ESPN scoreboards for ATP/WTA
+  - `renderTennisSchedule()` - Formats combined tours schedule
+  - `renderTennisGame()` - Formats detailed match scoreboard
+  - `findTennisCompetition()` - Locates match by ID across tours
+
 ## Routes
 | Route | Handler | Description |
 |-------|---------|-------------|
@@ -55,12 +65,16 @@ A Go-based scoreboard application that displays MLB/NBA game data in both termin
 | `/mlb/compare` | `handleCompareTeams` | Compare two teams (query: `?team1=X&team2=Y`) |
 | `/nba` | `handleNBASchedule` | NBA schedule |
 | `/nba/game/{gamePk}` | `handleNBAGame` | NBA game detail |
+| `/tennis` | `handleTennisSchedule` | Tennis scoreboard (ATP & WTA) |
+| `/tennis/game/{gamePk}` | `handleTennisGame` | Tennis match detail |
 
 ## API Endpoints
 - `GET /api/games` - MLB games JSON
 - `GET /api/game/{gamePk}` - Single MLB game detail
 - `GET /api/nba/games` - NBA games JSON
 - `GET /api/nba/game/{gamePk}` - Single NBA game detail
+- `GET /api/tennis/games` - ATP & WTA games combined JSON
+- `GET /api/tennis/game/{gamePk}` - Single Tennis match JSON
 
 ## External APIs
 - **MLB Stats API**: `https://statsapi.mlb.com/api/v1/`

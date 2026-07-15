@@ -240,6 +240,7 @@
             <a href="/mlb/compare" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Compare Teams</a>
             <a href="/mlb/team/130" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Teams</a>
             <a href="/nba" class="term-link" style="padding: 6px 14px; border-radius: 4px;">NBA</a>
+            <a href="/tennis" class="term-link" style="padding: 6px 14px; border-radius: 4px;">Tennis</a>
         </nav>
 
         <div class="status-bar">
@@ -256,13 +257,16 @@
             const timeStr = now.toTimeString().split(' ')[0];
             const isGamePage = window.location.pathname.startsWith('/game/');
             const isNBAGamePage = window.location.pathname.startsWith('/nba/game/');
+            const isTennisGamePage = window.location.pathname.startsWith('/tennis/game/');
 
             const leftEl = document.getElementById('status-left');
             const rightEl = document.getElementById('status-right');
 
-            if (isGamePage || isNBAGamePage) {
+            if (isGamePage || isNBAGamePage || isTennisGamePage) {
                 if (!leftEl.querySelector('a')) {
-                    const backUrl = isNBAGamePage ? '/nba' : '/';
+                    let backUrl = '/';
+                    if (isNBAGamePage) backUrl = '/nba';
+                    else if (isTennisGamePage) backUrl = '/tennis';
                     leftEl.innerHTML = '<a href="' + backUrl + '" class="term-link">&lt;&lt; BACK TO SCOREBOARD</a>';
                 }
                 rightEl.innerHTML = '<span class="dot-pulse"></span>LIVE FEED &bull; SYS TIME: ' + timeStr;

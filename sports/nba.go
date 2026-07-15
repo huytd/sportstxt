@@ -181,7 +181,7 @@ func renderNBASchedule(sched ESPNBAScoreboard, dateStr string, format string, lo
 	// Sports Selector row
 	if format != "html" {
 		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
-		sb.WriteString(txt("                         ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + "\n")
+		sb.WriteString(txt("           ", format) + style("[MLB]", ansiGray, format) + txt("             ", format) + style("[NBA]", ansiBold+ansiGreen, format) + txt("             ", format) + style("[TENNIS]", ansiGray, format) + "\n")
 		sb.WriteString(style("==============================================================================\n", ansiCyan, format))
 	}
 	sb.WriteString(txt(strings.Repeat(" ", padding), format))
